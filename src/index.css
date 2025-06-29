@@ -1,13 +1,42 @@
-body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+:root {
+    --primary-dark: #8F1F57;
+    --primary-main: #DD388B;
+    --primary-light: #F5DEEA;
+    --text-light: #FFFFFF;
+    --text-dark: #333333;
 }
-
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+body {
+    margin: 0;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+      'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+      sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background-color: var(--primary-light);
+    color: var(--text-dark);
+}
+.bg-primary-dark { background-color: var(--primary-dark); }
+.bg-primary-main { background-color: var(--primary-main); }
+.bg-primary-light { background-color: var(--primary-light); }
+.text-primary-dark { color: var(--primary-dark); }
+.text-primary-main { color: var(--primary-main); }
+.border-primary-main { border-color: var(--primary-main); }
+.border-primary-dark { border-color: var(--primary-dark); }
+.btn {
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+.btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 8px rgba(0, 0, 0, 0.15);
+}
+.modal-backdrop {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background-color: rgba(0, 0, 0, 0.6);
+    display: flex; justify-content: center; align-items: center;
+    z-index: 50;
+}
+.modal-content {
+    background-color: white; padding: 2rem; border-radius: 0.5rem;
+    max-width: 500px; width: 90%; text-align: left;
 }
