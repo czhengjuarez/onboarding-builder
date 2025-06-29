@@ -5,7 +5,8 @@ function App() {
   return (
     <div style={{ padding: '2rem', textAlign: 'center' }}>
       <h1>Hello World</h1>
-      <p>This is your first React page!</p>
+      <p>This is my first React page!</p>
+      <p>Adding  new lines </p>
     </div>
   );
 }
