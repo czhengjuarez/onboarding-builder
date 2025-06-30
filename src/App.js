@@ -117,7 +117,7 @@ export default function App() {
             console.error("Error removing document: ", error);
         }
     }, [db]);
-    
+
     const exportToPDF = () => {
         if (!window.jspdf) {
             console.error("jsPDF library not found.");
@@ -149,19 +149,16 @@ export default function App() {
         document.body.removeChild(link);
     };
 
+    // ===== UPDATED FUNCTION =====
     const downloadAsZip = () => {
-      if (!window.JSZip) {
-          console.error("JSZip library not found.");
-          return;
-      }
-      alert("This functionality is intended for creating a single-page HTML starter. For the full React project, please refer to the project source.");
+      // This function now opens the specified Google Drive link in a new tab.
+      window.open('https://drive.google.com/file/d/1Ptui3LF_KZ7NzV5Knem9o_vkZYXphZ8o/view?usp=drive_link', '_blank', 'noopener,noreferrer');
     };
 
     if (showDisclaimer) {
         return (
             <div className="modal-backdrop">
                 <div className="modal-content">
-                    {/* ===== UPDATED DISCLAIMER TEXT ===== */}
                     <h2 className="text-2xl font-bold mb-4 text-primary-dark">Terms of Use & Disclaimer</h2>
                     <div className="space-y-3 text-sm text-gray-700 mb-6">
                       <p>Welcome to the Quality Floor Checklist Builder. Before you begin, please read the following terms carefully:</p>
