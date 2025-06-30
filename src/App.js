@@ -200,7 +200,7 @@ export default function App() {
           <div className="flex flex-wrap justify-center gap-4 mb-6">
               <button onClick={exportToPDF} className="btn bg-white text-primary-dark font-semibold py-2 px-4 border border-primary-dark rounded-lg shadow">Export to PDF</button>
               <button onClick={exportToCSV} className="btn bg-white text-primary-dark font-semibold py-2 px-4 border border-primary-dark rounded-lg shadow">Export to CSV</button>
-              <button onClick={downloadAsZip} className="btn bg-primary-dark text-white font-semibold py-2 px-4 border border-primary-dark rounded-lg shadow">Download as ZIP</button>
+              <button onClick={downloadAsZip} className="btn bg-primary-dark text-white font-semibold py-2 px-4 border border-primary-dark rounded-lg shadow">App Deploy file as ZIP</button>
           </div>
           <div className="bg-white/70 border-2 border-dashed border-primary-main rounded-lg p-4 mb-6">
               <h3 className="font-bold text-lg text-primary-dark mb-3">How to Use This Checklist</h3>
