@@ -161,9 +161,18 @@ export default function App() {
         return (
             <div className="modal-backdrop">
                 <div className="modal-content">
-                    <h2 className="text-2xl font-bold mb-4 text-primary-dark">Disclaimer</h2>
-                    <p className="mb-4">This is a collaborative tool... Use this tool responsibly.</p>
-                    <p className="mb-6">By using this application, you agree to these terms.</p>
+                    {/* ===== UPDATED DISCLAIMER TEXT ===== */}
+                    <h2 className="text-2xl font-bold mb-4 text-primary-dark">Terms of Use & Disclaimer</h2>
+                    <div className="space-y-3 text-sm text-gray-700 mb-6">
+                      <p>Welcome to the Quality Floor Checklist Builder. Before you begin, please read the following terms carefully:</p>
+                      <ol className="list-decimal list-inside space-y-2">
+                        <li><strong>Public and Collaborative:</strong> All content, including any checklist items you add or delete, is public and will be visible to anyone who visits this page. Do not enter any private, sensitive, or confidential information.</li>
+                        <li><strong>No Guarantee of Privacy:</strong> There is no expectation of privacy for any data entered into this application. All data is stored in a shared database.</li>
+                        <li><strong>"As-Is" Service:</strong> This tool is provided "as-is" without any warranties. We are not responsible for the availability of the service or the loss of any data you enter.</li>
+                        <li><strong>User Responsibility:</strong> You are solely responsible for the content you contribute. Do not post anything that is unlawful, harmful, or infringes on the rights of others.</li>
+                      </ol>
+                      <p className="font-semibold text-gray-800">By clicking "Acknowledge & Continue," you confirm that you have read, understood, and agree to be bound by these terms.</p>
+                    </div>
                     <button onClick={() => setShowDisclaimer(false)} className="w-full btn bg-primary-dark text-white font-bold py-2 px-4 rounded-lg">Acknowledge & Continue</button>
                 </div>
             </div>
@@ -208,7 +217,7 @@ export default function App() {
                   <div>
                       <h4 className="font-semibold text-gray-800">Option 2: Deploy Your Own Private Version</h4>
                       <p className="text-gray-700 text-sm mt-1">
-                          For a completely private checklist for your team, you can deploy your own copy of this application. This requires some technical setup (creating a free Firebase project and deploying the code to a service like Cloudflare Pages or Netlify). Reach out to me to acquire a zip starter page.
+                          For a completely private checklist for your team, you can deploy your own copy of this application. This requires some technical setup (creating a free Firebase project and deploying the code to a service like Cloudflare Pages or Netlify).
                       </p>
                   </div>
               </div>
