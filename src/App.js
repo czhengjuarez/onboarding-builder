@@ -345,7 +345,7 @@ function App() {
                             <CalendarIcon /> Onboarding Templates
                         </button>
                         <button onClick={() => setActiveTab('jtbd')} className={`tab-btn ${activeTab === 'jtbd' ? 'active' : ''}`}>
-                            <TargetIcon /> JTBD Resources
+                            <TargetIcon /> Resources
                         </button>
                     </nav>
                 </div>
