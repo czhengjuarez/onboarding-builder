@@ -1,0 +1,26 @@
+name = "onboarding-builder"
+main = "worker/index.ts"
+compatibility_date = "2023-12-01"
+
+[build]
+command = "npm run build"
+cwd = "."
+watch_dir = "src"
+
+# Static assets configuration
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+
+[vars]
+# Firebase configuration
+FIREBASE_API_KEY = "AIzaSyB0kfRE2z_aV1E-FU5-XhaqKM0OhWlrBl8"
+FIREBASE_AUTH_DOMAIN = "onboarding-f1588.firebaseapp.com"
+FIREBASE_PROJECT_ID = "onboarding-f1588"
+FIREBASE_STORAGE_BUCKET = "onboarding-f1588.appspot.com"
+FIREBASE_MESSAGING_SENDER_ID = "624572514846"
+FIREBASE_APP_ID = "1:624572514846:web:3ed98bdf1671aabdf7e40f"
+FIREBASE_MEASUREMENT_ID = "G-V56MBZZHGK"
+
+# Google OAuth (placeholder for future use)
+GOOGLE_CLIENT_ID = "624572514846-pj7gfvyco4contgf4bv2m59nkj8h8dkj.apps.googleusercontent.com"

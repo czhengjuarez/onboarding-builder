@@ -5,8 +5,22 @@ module.exports = {
   entry: './src/index.js',
   output: {
     path: path.resolve(__dirname, 'dist'),
-    filename: 'bundle.js',
+    filename: 'static/js/[name].[contenthash].js',
+    chunkFilename: 'static/js/[name].[contenthash].js',
     publicPath: '/',
+    clean: true,
+  },
+  optimization: {
+    splitChunks: {
+      chunks: 'all',
+      cacheGroups: {
+        vendor: {
+          test: /[\\/]node_modules[\\/]/,
+          name: 'vendors',
+          chunks: 'all',
+        },
+      },
+    },
   },
   module: {
     rules: [
