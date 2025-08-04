@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom component styles */
+@layer components {
+  /* Google Sign-In Button */
+  .gsi-material-button {
+    @apply flex items-center justify-center gap-3 w-full max-w-sm mx-auto px-4 py-2 bg-white border border-gray-300 rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 cursor-pointer;
+  }
+  
+  .gsi-material-button-content-wrapper {
+    @apply flex items-center justify-center gap-3;
+  }
+  
+  .gsi-material-button-icon {
+    @apply w-5 h-5 flex-shrink-0;
+  }
+  
+  .gsi-material-button-contents {
+    @apply text-gray-700 font-medium text-sm;
+  }
+  
+  /* Loading spinner animation */
+  .loading-spinner {
+    @apply w-8 h-8 border-4 border-gray-200 border-t-primary-500 rounded-full animate-spin;
+  }
+  
+  /* Enhanced task styling */
+  .task-item-enhanced {
+    @apply flex items-center gap-4 p-4 bg-white rounded-lg border border-gray-200 shadow-sm hover:shadow-md hover:border-primary-300 transition-all duration-200;
+  }
+  
+  /* Enhanced checkbox styling */
+  .task-checkbox-enhanced {
+    @apply w-5 h-5 text-gray-700 bg-white border-2 border-gray-300 rounded focus:ring-gray-500 focus:ring-2 focus:ring-offset-0 transition-colors;
+    accent-color: #374151 !important;
+  }
+  
+  .task-checkbox-enhanced:checked {
+    @apply bg-gray-700 border-gray-700 text-white;
+    background-color: #374151 !important;
+    border-color: #374151 !important;
+    color: white !important;
+  }
+  
+  .task-checkbox-enhanced:focus {
+    @apply ring-gray-500;
+    --tw-ring-color: rgb(107 114 128) !important;
+  }
+  
+  /* Period section styling */
+  .period-section-enhanced {
+    @apply mb-8 last:mb-0 bg-gray-50 rounded-xl p-6 border border-gray-100;
+  }
+  
+  /* Section header styling */
+  .section-header-enhanced {
+    @apply flex items-center gap-3 text-xl font-semibold text-gray-800 mb-6 pb-3 border-b border-gray-200;
+  }
+  
+  /* Form input styling */
+  .form-input-enhanced {
+    @apply px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white shadow-sm transition-all duration-200 text-sm;
+  }
+  
+  /* Button styling */
+  .btn-primary-enhanced {
+    @apply bg-primary-500 text-white px-4 py-2 rounded-md hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 transition-all duration-200 font-medium shadow-sm hover:shadow-md text-sm flex items-center gap-2;
+  }
+  
+  /* Card container styling */
+  .card-enhanced {
+    @apply bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow duration-200;
+  }
+}

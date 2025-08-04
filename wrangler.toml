@@ -1,0 +1,24 @@
+name = "onboarding-builder"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ENVIRONMENT = "development"
+# Note: Set these values using 'wrangler secret put' command for production
+# GOOGLE_CLIENT_ID = "your-google-client-id"
+# GOOGLE_CLIENT_SECRET = "your-google-client-secret"
+# JWT_SECRET = "your-jwt-secret-key"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "onboarding-builder"
+database_id = "83620845-c9d9-4eec-bdc7-97f687f742fc"
+
+[build]
+command = "npm run build"
+
+# Assets configuration for static files
+[assets]
+directory = "./dist"
+binding = "ASSETS"

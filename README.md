@@ -1,23 +1,152 @@
-# Getting Started with Create React App
+# DesignOps Onboarding Template Builder
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+A comprehensive onboarding template builder with dual authentication system (email/password + Google OAuth), guest mode exploration, and account management features. Built with React, TypeScript, and deployed on Cloudflare Workers with D1 database.
 
-## Available Scripts
+## 🚀 Live Demo
 
-In the project directory, you can run:
+**Production URL:** https://onboarding-builder.coscient.workers.dev
 
-### `npm start`
+## ✨ Features
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+### 🔐 **Comprehensive Authentication System**
+- **Email/Password Registration & Login** - Secure account creation with bcrypt hashing
+- **Google OAuth Integration** - Seamless Google Sign-In alongside email/password
+- **Guest Mode Exploration** - Users can explore all features before signing in
+- **Smart Warning System** - Alerts guest users about data loss when making changes
+- **Account Management** - Profile viewing and secure account deletion with complete data cleanup
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+### 📋 **Onboarding Template Builder**
+- **Period-based Templates** - Organize tasks by Day 1, Week 1, Month 1, etc.
+- **Priority Management** - High, Medium, Low priority task categorization
+- **JTBD Framework** - Jobs-to-be-Done categories with resource management
+- **PDF Export** - Download professional onboarding templates
+- **Real-time Updates** - Instant synchronization across all user sessions
 
-### `npm test`
+### 🛠️ **Technical Stack**
+- **Frontend:** React 18, TypeScript, Tailwind CSS
+- **Backend:** Cloudflare Workers with Hono framework
+- **Database:** Cloudflare D1 (SQLite)
+- **Authentication:** JWT tokens with bcrypt password hashing
+- **Deployment:** Cloudflare Workers with automatic CI/CD
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+## 🏗️ **Setup & Development**
+
+### Prerequisites
+- Node.js 18+
+- npm or yarn
+- Cloudflare account (for deployment)
+- Google Cloud Console project (for OAuth)
+
+### Local Development
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/czhengjuarez/onboarding-builder
+   cd onboarding-builder
+   ```
+
+2. **Install dependencies**
+   ```bash
+   npm install
+   ```
+
+3. **Set up environment variables**
+   ```bash
+   cp .env.example .env.local
+   # Edit .env.local with your credentials
+   ```
+
+4. **Run database migrations**
+   ```bash
+   npx wrangler d1 execute onboarding-builder --local --file=./migrations/0001_initial_schema.sql
+   npx wrangler d1 execute onboarding-builder --local --file=./migrations/0002_jtbd_resources_update.sql
+   npx wrangler d1 execute onboarding-builder --local --file=./migrations/0003_add_password_auth.sql
+   ```
+
+5. **Start development server**
+   ```bash
+   npm run dev
+   ```
+
+## 🔧 **Configuration**
+
+### Google OAuth Setup
+1. Go to [Google Cloud Console](https://console.cloud.google.com)
+2. Create a new project or select existing
+3. Enable Google+ API
+4. Create OAuth 2.0 credentials
+5. Add authorized redirect URIs:
+   - `http://localhost:8787/api/auth/google/callback` (development)
+   - `https://your-domain.workers.dev/api/auth/google/callback` (production)
+
+### Environment Variables
+Required environment variables (see `.env.example`):
+- `GOOGLE_CLIENT_ID` - Google OAuth client ID
+- `GOOGLE_CLIENT_SECRET` - Google OAuth client secret
+- `JWT_SECRET` - Secure random string for JWT signing
+
+## 🚀 **Deployment**
+
+### Production Deployment to Cloudflare Workers
+
+1. **Set up Wrangler secrets**
+   ```bash
+   npx wrangler secret put GOOGLE_CLIENT_ID
+   npx wrangler secret put GOOGLE_CLIENT_SECRET
+   npx wrangler secret put JWT_SECRET
+   ```
+
+2. **Run remote database migrations**
+   ```bash
+   npx wrangler d1 execute onboarding-builder --remote --file=./migrations/0001_initial_schema.sql
+   npx wrangler d1 execute onboarding-builder --remote --file=./migrations/0002_jtbd_resources_update.sql
+   npx wrangler d1 execute onboarding-builder --remote --file=./migrations/0003_add_password_auth.sql
+   ```
+
+3. **Deploy to Cloudflare Workers**
+   ```bash
+   npm run deploy
+   ```
+
+## 📡 **API Endpoints**
+
+### Authentication
+- `POST /api/auth/register` - Email/password registration
+- `POST /api/auth/login` - Email/password login
+- `GET /api/auth/google` - Google OAuth redirect
+- `GET /api/auth/google/callback` - Google OAuth callback
+- `GET /api/auth/verify` - JWT token verification
+- `GET /api/auth/config` - Google Client ID for frontend
+- `DELETE /api/auth/delete-account` - Account deletion
+
+### Templates & JTBD
+- `GET /api/templates/:userId` - Get user's onboarding templates
+- `POST /api/templates` - Create new template
+- `PUT /api/templates/:id` - Update template
+- `DELETE /api/templates/:id` - Delete template
+- `GET /api/jtbd/:userId` - Get user's JTBD categories
+- `POST /api/jtbd` - Create JTBD category
+- `DELETE /api/jtbd/:id` - Delete JTBD category
+
+## 🗄️ **Database Schema**
+
+The application uses Cloudflare D1 with the following tables:
+- `users` - User accounts with email/password and OAuth data
+- `onboarding_templates` - Period-based onboarding tasks
+- `jtbd_categories` - Jobs-to-be-Done categories
+- `resources` - Resources linked to JTBD categories
+- `jtbd_category_resources` - Many-to-many relationship table
+
+## 🔒 **Security Features**
+
+- **Password Hashing:** bcrypt with salt rounds
+- **JWT Tokens:** 7-day expiry with secure signing
+- **Input Validation:** Server-side validation for all endpoints
+- **SQL Injection Protection:** Prepared statements with parameter binding
+- **CORS Configuration:** Proper cross-origin resource sharing setup
+- **Secret Management:** Environment variables and Wrangler secrets
+
+## 🧪 **Available Scripts**
 
 ### `npm run build`
 
