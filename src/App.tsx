@@ -1763,7 +1763,7 @@ function App() {
                             Items created without signing in will be lost when you leave the page. 
                             Sign in with Google to save your progress.
                         </p>
-                        <div className="flex gap-3">
+                        <div className="flex flex-col sm:flex-row gap-3">
                             <button
                                 onClick={() => {
                                     setShowGuestWarning(false)
@@ -1781,7 +1781,7 @@ function App() {
                             </button>
                             <button
                                 onClick={cancelGuestAction}
-                                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+                                className="w-full sm:w-auto px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
                             >
                                 Cancel
                             </button>
@@ -1791,25 +1791,27 @@ function App() {
             )}
 
             {/* Header */}
-            <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between sticky top-0 z-50">
-                <h1 className="text-2xl font-semibold text-gray-800 flex items-center gap-3">
+            <header className="bg-white border-b border-gray-200 px-4 sm:px-6 py-4 flex items-center justify-between sticky top-0 z-50">
+                <h1 className="text-lg sm:text-2xl font-semibold text-gray-800 flex items-center gap-2 sm:gap-3 min-w-0">
                     <DesignOpsIcon />
-                    DesignOps Onboarding Template Builder
-                    {!user && <span className="text-sm bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full ml-2">Guest Mode</span>}
+                    <span className="hidden sm:inline">DesignOps Onboarding Template Builder</span>
+                    <span className="sm:hidden truncate">Onboarding Builder</span>
+                    {!user && <span className="text-xs sm:text-sm bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full ml-1 sm:ml-2 flex-shrink-0">Guest</span>}
                 </h1>
-                <div className="flex items-center gap-4">
-                    <button onClick={() => handleGuestAction(generatePDF, 'add')} className="flex items-center gap-2 bg-white text-gray-700 px-3 py-2 rounded-md hover:bg-gray-50 border border-gray-300 transition-colors text-sm font-medium">
+                <div className="flex items-center gap-2 sm:gap-4">
+                    <button onClick={() => handleGuestAction(generatePDF, 'add')} className="flex items-center gap-1 sm:gap-2 bg-white text-gray-700 px-2 sm:px-3 py-2 rounded-md hover:bg-gray-50 border border-gray-300 transition-colors text-sm font-medium">
                         <DownloadIcon />
-                        Download PDF
+                        <span className="hidden sm:inline">Download PDF</span>
                     </button>
                     {user && (
                         <>
-                            <button onClick={handleOpenShareModal} className="flex items-center gap-2 bg-primary-500 text-white px-3 py-2 rounded-md hover:bg-primary-600 transition-colors text-sm font-medium">
+                            <button onClick={handleOpenShareModal} className="flex items-center gap-1 sm:gap-2 bg-primary-500 text-white px-2 sm:px-3 py-2 rounded-md hover:bg-primary-600 transition-colors text-sm font-medium">
                                 <ShareIcon />
-                                Share Template
+                                <span className="hidden sm:inline">Share Template</span>
                             </button>
-                            <button onClick={handleOpenMySharesModal} className="flex items-center gap-2 bg-white text-gray-700 px-3 py-2 rounded-md hover:bg-gray-50 border border-gray-300 transition-colors text-sm font-medium">
-                                My Shares
+                            <button onClick={handleOpenMySharesModal} className="flex items-center gap-1 sm:gap-2 bg-white text-gray-700 px-2 sm:px-3 py-2 rounded-md hover:bg-gray-50 border border-gray-300 transition-colors text-sm font-medium">
+                                <span className="hidden sm:inline">My Shares</span>
+                                <span className="sm:hidden">Shares</span>
                             </button>
                         </>
                     )}
@@ -1859,10 +1861,10 @@ function App() {
             </header>
 
             {/* Navigation */}
-            <nav className="bg-white border-b border-gray-200 px-6 flex gap-8">
+            <nav className="bg-white border-b border-gray-200 px-4 sm:px-6 flex gap-4 sm:gap-8">
                 <button
                     onClick={() => setActiveTab('templates')}
-                    className={`py-2 pr-2 font-medium border-b-2 transition-colors flex items-center gap-2 ${
+                    className={`py-3 sm:py-2 pr-2 font-medium border-b-2 transition-colors flex items-center gap-1 sm:gap-2 text-sm sm:text-base ${
                         activeTab === 'templates' 
                             ? 'text-gray-800 border-primary-600' 
                             : 'text-gray-500 border-transparent hover:text-gray-700'
@@ -1873,7 +1875,7 @@ function App() {
                 </button>
                 <button
                     onClick={() => setActiveTab('jtbd')}
-                    className={`py-2 pr-2 font-medium border-b-2 transition-colors flex items-center gap-2 ${
+                    className={`py-3 sm:py-2 pr-2 font-medium border-b-2 transition-colors flex items-center gap-1 sm:gap-2 text-sm sm:text-base ${
                         activeTab === 'jtbd' 
                             ? 'text-gray-800 border-primary-600' 
                             : 'text-gray-500 border-transparent hover:text-gray-700'
@@ -1885,11 +1887,11 @@ function App() {
             </nav>
 
             {/* Main Content */}
-            <main className="p-6 max-w-6xl mx-auto">
+            <main className="p-4 sm:p-6 max-w-7xl mx-auto">
                 {activeTab === 'templates' && (
-                    <div className="flex gap-6">
+                    <div className="flex flex-col lg:flex-row gap-4 lg:gap-6">
                         {/* Left Sidebar - Period Navigation */}
-                        <div className="w-64 flex-shrink-0">
+                        <div className="w-full lg:w-64 lg:flex-shrink-0">
                             <div className="card-enhanced">
                                 <div className="px-4 py-3 border-b border-gray-200">
                                     <h3 className="font-semibold text-gray-800">Onboarding Periods</h3>
@@ -1919,10 +1921,10 @@ function App() {
                         </div>
 
                         {/* Main Content - Selected Period Tasks */}
-                        <div className="flex-1">
+                        <div className="flex-1 min-w-0">
                             <div className="card-enhanced">
-                                <div className="px-6 py-4 border-b border-gray-200">
-                                    <h2 className="text-xl font-semibold text-gray-800">
+                                <div className="px-4 sm:px-6 py-4 border-b border-gray-200">
+                                    <h2 className="text-lg sm:text-xl font-semibold text-gray-800">
                                         {selectedPeriod === 'firstDay' && 'First Day Tasks'}
                                         {selectedPeriod === 'firstWeek' && 'First Week Tasks'}
                                         {selectedPeriod === 'secondWeek' && 'Second Week Tasks'}
@@ -1936,8 +1938,8 @@ function App() {
                                         <div className="loading-spinner"></div>
                                     </div>
                                 ) : (
-                                    <div id="onboarding-template" className="p-6 pb-20">
-                                        <div className="flex gap-3 mb-6">
+                                    <div id="onboarding-template" className="p-4 sm:p-6 pb-16 sm:pb-20">
+                                        <div className="flex flex-col sm:flex-row gap-3 mb-6">
                                             <input
                                                 type="text"
                                                 placeholder="Add a new task..."
@@ -1952,7 +1954,7 @@ function App() {
                                             />
                                             <button
                                                 onClick={() => handleGuestAction(() => addTask(selectedPeriod), 'add')}
-                                                className="btn-primary-enhanced flex-shrink-0"
+                                                className="btn-primary-enhanced w-full sm:w-auto sm:flex-shrink-0"
                                             >
                                                 <PlusIcon />
                                                 Add
@@ -1971,19 +1973,19 @@ function App() {
                 {activeTab === 'jtbd' && (
                     <div>
                         <div className="card-enhanced mb-6">
-                            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-                                <div>
-                                    <h2 className="text-xl font-semibold text-gray-800">Resources Creator</h2>
+                            <div className="px-4 sm:px-6 py-4 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                    <h2 className="text-lg sm:text-xl font-semibold text-gray-800">Resources Creator</h2>
                                     <p className="text-gray-600 text-sm mt-1">Create resource libraries organized by user needs and outcomes</p>
                                 </div>
-                                <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
+                                <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full flex-shrink-0 self-start sm:self-auto">
                                     {jtbdResources.length} resource categories
                                 </span>
                             </div>
                             
-                            <div className="p-6">
-                                <h3 className="text-lg font-semibold text-gray-800 mb-4">Add New Resource Category</h3>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                            <div className="p-4 sm:p-6">
+                                <h3 className="text-base sm:text-lg font-semibold text-gray-800 mb-4">Add New Resource Category</h3>
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
                                     <div>
                                         <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
                                         <input
@@ -2027,7 +2029,7 @@ function App() {
                                 </div>
                                 <button 
                                     onClick={() => handleGuestAction(handleAddJTBDResource, 'add')} 
-                                    className="flex items-center gap-2 bg-primary-500 text-white px-4 py-2 rounded-md hover:bg-primary-600 transition-colors font-medium"
+                                    className="w-full sm:w-auto flex items-center justify-center gap-2 bg-primary-500 text-white px-4 py-2 rounded-md hover:bg-primary-600 transition-colors font-medium"
                                 >
                                     <PlusIcon />
                                     Add Resource Category

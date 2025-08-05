@@ -10,6 +10,7 @@ ENVIRONMENT = "development"
 # JWT_SECRET should be set in .dev.vars for local development
 # and as environment variables in Cloudflare Workers for production
 
+
 [[d1_databases]]
 binding = "DB"
 database_name = "onboarding-builder"
