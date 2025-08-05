@@ -2,6 +2,24 @@ import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import * as bcrypt from 'bcryptjs'
 
+// Cloudflare Workers types
+declare global {
+  interface D1Database {
+    prepare(query: string): D1PreparedStatement
+  }
+  
+  interface D1PreparedStatement {
+    bind(...values: any[]): D1PreparedStatement
+    first(): Promise<any>
+    all(): Promise<{ results: any[] }>
+    run(): Promise<any>
+  }
+  
+  interface Fetcher {
+    fetch(input: RequestInfo, init?: RequestInit): Promise<Response>
+  }
+}
+
 type Bindings = {
   DB: D1Database
   ASSETS: Fetcher
@@ -77,6 +95,519 @@ app.delete('/api/templates/:id', async (c) => {
     return c.json({ success: true })
   } catch (error) {
     return c.json({ success: false, error: 'Failed to delete template' }, 500)
+  }
+})
+
+// Template Sharing API Routes
+
+// Generate invite link for a template
+app.post('/api/templates/share', async (c) => {
+  // JWT Authentication
+  const authHeader = c.req.header('Authorization')
+  
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return c.json({ error: 'No token provided' }, 401)
+  }
+  
+  const token = authHeader.substring(7)
+  
+  try {
+    // Verify JWT token
+    const tokenData = verifyJWT(token, c.env.JWT_SECRET)
+    const userId = tokenData.id
+    
+    const { templateId, title, description, expiresIn, maxClones } = await c.req.json()
+    
+    console.log('Share request received:', { templateId, userId, title, description, expiresIn, maxClones })
+    
+    if (!title) {
+      console.log('Missing required fields:', { title })
+      return c.json({ success: false, error: 'Missing required fields' }, 400)
+    }
+    
+    // Verify user exists and has templates/resources to share
+    const user = await c.env.DB.prepare(
+      'SELECT * FROM users WHERE id = ?'
+    ).bind(userId).first()
+    
+    console.log('User lookup result:', user)
+    
+    if (!user) {
+      console.log('User not found for userId:', userId)
+      return c.json({ success: false, error: 'User not found' }, 404)
+    }
+    
+    // Check if user has any templates or JTBD resources to share
+    const hasTemplates = await c.env.DB.prepare(
+      'SELECT COUNT(*) as count FROM onboarding_templates WHERE user_id = ?'
+    ).bind(userId).first()
+    
+    const hasJTBDCategories = await c.env.DB.prepare(
+      'SELECT COUNT(*) as count FROM jtbd_categories WHERE user_id = ?'
+    ).bind(userId).first()
+    
+    console.log('Content check:', { hasTemplates: hasTemplates.count, hasJTBDCategories: hasJTBDCategories.count })
+    
+    if (hasTemplates.count === 0 && hasJTBDCategories.count === 0) {
+      console.log('No content to share for user:', userId)
+      return c.json({ success: false, error: 'No templates or resources to share' }, 400)
+    }
+    
+    // Generate unique invite token
+    const inviteToken = crypto.randomUUID()
+    
+    // Calculate expiration date if specified
+    let expiresAt: string | null = null
+    if (expiresIn) {
+      const now = new Date()
+      expiresAt = new Date(now.getTime() + (expiresIn * 24 * 60 * 60 * 1000)).toISOString() // expiresIn is in days
+    }
+    
+    // Create shared template record
+    const shareId = crypto.randomUUID()
+    await c.env.DB.prepare(
+      'INSERT INTO shared_templates (id, template_id, owner_user_id, invite_token, title, description, expires_at, max_clones) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).bind(shareId, null, userId, inviteToken, title, description, expiresAt, maxClones).run()
+    
+    return c.json({ 
+      success: true, 
+      data: { 
+        shareId, 
+        inviteToken, 
+        inviteUrl: `${new URL(c.req.url).origin}/invite/${inviteToken}`,
+        title,
+        description,
+        expiresAt,
+        maxClones
+      } 
+    })
+  } catch (error) {
+    console.error('JWT verification or share template error:', error)
+    return c.json({ success: false, error: 'Failed to share template' }, 500)
+  }
+})
+
+// Get shared template details by invite token
+app.get('/api/templates/shared/:token', async (c) => {
+  const token = c.req.param('token')
+  console.log('Shared template endpoint called with token:', token)
+  
+  try {
+    const sharedTemplate = await c.env.DB.prepare(`
+      SELECT 
+        st.*,
+        u.name as owner_name,
+        u.email as owner_email
+      FROM shared_templates st
+      JOIN users u ON st.owner_user_id = u.id
+      WHERE st.invite_token = ? AND st.is_active = 1
+    `).bind(token).first()
+    
+    console.log('Database query result:', sharedTemplate)
+    
+    if (!sharedTemplate) {
+      console.log('No shared template found for token:', token)
+      return c.json({ success: false, error: 'Shared template not found or inactive' }, 404)
+    }
+    
+    console.log('Found shared template:', {
+      title: sharedTemplate.title,
+      owner_user_id: sharedTemplate.owner_user_id,
+      expires_at: sharedTemplate.expires_at
+    })
+    
+    // Check if expired
+    if (sharedTemplate.expires_at && new Date(sharedTemplate.expires_at) < new Date()) {
+      return c.json({ success: false, error: 'Invite link has expired' }, 410)
+    }
+    
+    // Check if max clones reached
+    if (sharedTemplate.max_clones && sharedTemplate.clone_count >= sharedTemplate.max_clones) {
+      return c.json({ success: false, error: 'Maximum number of clones reached' }, 410)
+    }
+    
+    // Get the actual template data
+    const { results: templateData } = await c.env.DB.prepare(
+      'SELECT * FROM onboarding_templates WHERE user_id = ? ORDER BY period, created_at'
+    ).bind(sharedTemplate.owner_user_id).all()
+    
+    // Get JTBD resources for the template owner
+    const { results: jtbdCategories } = await c.env.DB.prepare(
+      'SELECT * FROM jtbd_categories WHERE user_id = ? ORDER BY created_at DESC'
+    ).bind(sharedTemplate.owner_user_id).all()
+    
+    const jtbdWithResources = await Promise.all(
+      jtbdCategories.map(async (category: any) => {
+        const { results: resources } = await c.env.DB.prepare(
+          'SELECT * FROM resources WHERE category_id = ? ORDER BY created_at'
+        ).bind(category.id).all()
+        
+        return {
+          id: category.id,
+          category: category.category,
+          job: category.job,
+          situation: category.situation,
+          outcome: category.outcome,
+          resources: resources
+        }
+      })
+    )
+    
+    return c.json({ 
+      success: true, 
+      data: {
+        shareInfo: {
+          title: sharedTemplate.title,
+          description: sharedTemplate.description,
+          ownerName: sharedTemplate.owner_name,
+          ownerEmail: sharedTemplate.owner_email,
+          cloneCount: sharedTemplate.clone_count,
+          maxClones: sharedTemplate.max_clones,
+          expiresAt: sharedTemplate.expires_at
+        },
+        templates: templateData,
+        jtbdResources: jtbdWithResources
+      }
+    })
+  } catch (error) {
+    console.error('Get shared template error details:', {
+      message: error.message,
+      stack: error.stack,
+      error: error
+    })
+    return c.json({ success: false, error: `Failed to fetch shared template: ${error.message}` }, 500)
+  }
+})
+
+// Clone shared template to user's account
+app.post('/api/templates/clone/:token', async (c) => {
+  const token = c.req.param('token')
+  console.log('Clone endpoint called with token:', token)
+  
+  let requestBody
+  try {
+    requestBody = await c.req.json()
+    console.log('Request body:', requestBody)
+  } catch (error) {
+    console.error('Error parsing request body:', error)
+    return c.json({ success: false, error: 'Invalid request body' }, 400)
+  }
+  
+  const { userId, confirmed } = requestBody
+  console.log('Extracted userId:', userId, 'confirmed:', confirmed)
+  
+  if (!userId) {
+    console.error('No userId provided')
+    return c.json({ success: false, error: 'User ID required' }, 400)
+  }
+  
+  try {
+    // Get shared template info
+    const sharedTemplate = await c.env.DB.prepare(
+      'SELECT * FROM shared_templates WHERE invite_token = ? AND is_active = 1'
+    ).bind(token).first()
+    
+    if (!sharedTemplate) {
+      return c.json({ success: false, error: 'Shared template not found or inactive' }, 404)
+    }
+    
+    // Check if expired
+    if (sharedTemplate.expires_at && new Date(sharedTemplate.expires_at) < new Date()) {
+      return c.json({ success: false, error: 'Invite link has expired' }, 410)
+    }
+    
+    // Check if max clones reached
+    if (sharedTemplate.max_clones && sharedTemplate.clone_count >= sharedTemplate.max_clones) {
+      return c.json({ success: false, error: 'Maximum number of clones reached' }, 410)
+    }
+    
+    // Check if user is trying to clone their own template
+    if (sharedTemplate.owner_user_id === userId) {
+      return c.json({ success: false, error: 'Cannot clone your own template' }, 400)
+    }
+    
+    // Check if user has existing data and needs confirmation
+    if (!confirmed) {
+      const { results: existingTemplates } = await c.env.DB.prepare(
+        'SELECT COUNT(*) as count FROM onboarding_templates WHERE user_id = ?'
+      ).bind(userId).all()
+      
+      const { results: existingJtbd } = await c.env.DB.prepare(
+        'SELECT COUNT(*) as count FROM jtbd_categories WHERE user_id = ?'
+      ).bind(userId).all()
+      
+      const hasExistingTemplates = existingTemplates[0]?.count > 0
+      const hasExistingJtbd = existingJtbd[0]?.count > 0
+      
+      if (hasExistingTemplates || hasExistingJtbd) {
+        return c.json({ 
+          success: false, 
+          requiresConfirmation: true,
+          message: 'You already have existing templates and resource data. Cloning will add the shared content to your existing data.',
+          existingData: {
+            templates: hasExistingTemplates,
+            jtbd: hasExistingJtbd
+          }
+        }, 200)
+      }
+    }
+    
+    // Get the original template data
+    const { results: originalTemplates } = await c.env.DB.prepare(
+      'SELECT * FROM onboarding_templates WHERE user_id = ?'
+    ).bind(sharedTemplate.owner_user_id).all()
+    
+    // Get the original JTBD data
+    const { results: originalJtbdCategories } = await c.env.DB.prepare(
+      'SELECT * FROM jtbd_categories WHERE user_id = ?'
+    ).bind(sharedTemplate.owner_user_id).all()
+    
+    // Get user's existing templates to check for duplicates
+    const { results: existingTemplates } = await c.env.DB.prepare(
+      'SELECT * FROM onboarding_templates WHERE user_id = ?'
+    ).bind(userId).all()
+    
+    // Clone templates with duplicate detection
+    console.log('Cloning templates with duplicate detection:', originalTemplates.length)
+    let templatesAdded = 0
+    let templatesSkipped = 0
+    
+    for (const template of originalTemplates) {
+      // Check if template already exists (compare title and period)
+      const isDuplicate = existingTemplates.some(existing => 
+        existing.title === template.title && existing.period === template.period
+      )
+      
+      if (isDuplicate) {
+        console.log('Skipping duplicate template:', template.title)
+        templatesSkipped++
+        continue
+      }
+      
+      const newId = crypto.randomUUID()
+      console.log('Adding new template:', {
+        id: newId,
+        userId,
+        period: template.period,
+        title: template.title,
+        priority: template.priority,
+        completed: false
+      })
+      
+      await c.env.DB.prepare(
+        'INSERT INTO onboarding_templates (id, user_id, period, title, priority, completed) VALUES (?, ?, ?, ?, ?, ?)'
+      ).bind(
+        newId, 
+        userId, 
+        template.period || null, 
+        template.title || null, 
+        template.priority || null, 
+        false
+      ).run()
+      
+      templatesAdded++
+    }
+    
+    // Get user's existing categories to enable smart merging
+    const { results: existingCategories } = await c.env.DB.prepare(
+      'SELECT * FROM jtbd_categories WHERE user_id = ?'
+    ).bind(userId).all()
+    
+    // Smart category and resource merging
+    console.log('Processing categories with smart merging:', originalJtbdCategories.length)
+    let categoriesAdded = 0
+    let categoriesMerged = 0
+    let resourcesAdded = 0
+    let resourcesSkipped = 0
+    
+    for (const category of originalJtbdCategories) {
+      // Check if user already has a matching category (compare category name)
+      const matchingCategory = existingCategories.find(existing => 
+        existing.category === category.category
+      )
+      
+      let targetCategoryId
+      
+      if (matchingCategory) {
+        // Use existing category - keep user's version
+        console.log('Found matching category, merging resources into:', matchingCategory.category)
+        targetCategoryId = matchingCategory.id
+        categoriesMerged++
+      } else {
+        // Create new category
+        targetCategoryId = crypto.randomUUID()
+        console.log('Creating new category:', {
+          id: targetCategoryId,
+          userId,
+          category: category.category,
+          job: category.job,
+          situation: category.situation,
+          outcome: category.outcome
+        })
+        
+        await c.env.DB.prepare(
+          'INSERT INTO jtbd_categories (id, user_id, category, job, situation, outcome) VALUES (?, ?, ?, ?, ?, ?)'
+        ).bind(
+          targetCategoryId, 
+          userId, 
+          category.category || null, 
+          category.job || null, 
+          category.situation || null, 
+          category.outcome || null
+        ).run()
+        
+        categoriesAdded++
+      }
+      
+      // Get resources for this category
+      const { results: resources } = await c.env.DB.prepare(
+        'SELECT * FROM resources WHERE category_id = ?'
+      ).bind(category.id).all()
+      
+      // Get existing resources in target category to check for duplicates
+      const { results: existingResources } = await c.env.DB.prepare(
+        'SELECT * FROM resources WHERE category_id = ?'
+      ).bind(targetCategoryId).all()
+      
+      console.log('Processing resources for category:', resources.length)
+      for (const resource of resources) {
+        // Check if resource already exists (compare name and URL)
+        const isDuplicateResource = existingResources.some(existing => 
+          existing.name === resource.name && existing.url === resource.url
+        )
+        
+        if (isDuplicateResource) {
+          console.log('Skipping duplicate resource:', resource.name)
+          resourcesSkipped++
+          continue
+        }
+        
+        const newResourceId = crypto.randomUUID()
+        console.log('Adding resource to category:', {
+          id: newResourceId,
+          categoryId: targetCategoryId,
+          name: resource.name,
+          type: resource.type,
+          url: resource.url
+        })
+        
+        await c.env.DB.prepare(
+          'INSERT INTO resources (id, category_id, name, type, url) VALUES (?, ?, ?, ?, ?)'
+        ).bind(
+          newResourceId, 
+          targetCategoryId, 
+          resource.name || null, 
+          resource.type || null, 
+          resource.url || null
+        ).run()
+        
+        resourcesAdded++
+      }
+    }
+    
+    // Increment clone count
+    await c.env.DB.prepare(
+      'UPDATE shared_templates SET clone_count = clone_count + 1 WHERE invite_token = ?'
+    ).bind(token).run()
+    
+    // Create detailed success message
+    const totalTemplatesProcessed = originalTemplates.length
+    const totalCategoriesProcessed = originalJtbdCategories.length
+    const totalResourcesProcessed = originalJtbdCategories.reduce((total, cat) => {
+      // This is an approximation since we don't have the exact count here
+      return total + (cat.resources?.length || 0)
+    }, 0)
+    
+    let message = 'Content successfully merged into your account!'
+    const details: string[] = []
+    
+    if (templatesAdded > 0) {
+      details.push(`${templatesAdded} new template${templatesAdded === 1 ? '' : 's'} added`)
+    }
+    if (templatesSkipped > 0) {
+      details.push(`${templatesSkipped} duplicate template${templatesSkipped === 1 ? '' : 's'} skipped`)
+    }
+    if (categoriesAdded > 0) {
+      details.push(`${categoriesAdded} new categor${categoriesAdded === 1 ? 'y' : 'ies'} created`)
+    }
+    if (categoriesMerged > 0) {
+      details.push(`${categoriesMerged} categor${categoriesMerged === 1 ? 'y' : 'ies'} merged with existing`)
+    }
+    if (resourcesAdded > 0) {
+      details.push(`${resourcesAdded} new resource${resourcesAdded === 1 ? '' : 's'} added`)
+    }
+    if (resourcesSkipped > 0) {
+      details.push(`${resourcesSkipped} duplicate resource${resourcesSkipped === 1 ? '' : 's'} skipped`)
+    }
+    
+    if (details.length > 0) {
+      message += ' ' + details.join(', ') + '.'
+    }
+    
+    return c.json({ 
+      success: true, 
+      message: message,
+      data: {
+        templatesProcessed: totalTemplatesProcessed,
+        templatesAdded: templatesAdded,
+        templatesSkipped: templatesSkipped,
+        categoriesProcessed: totalCategoriesProcessed,
+        categoriesAdded: categoriesAdded,
+        categoriesMerged: categoriesMerged,
+        resourcesAdded: resourcesAdded,
+        resourcesSkipped: resourcesSkipped
+      }
+    })
+  } catch (error) {
+    console.error('Clone template error details:', {
+      message: error.message,
+      stack: error.stack,
+      error: error
+    })
+    return c.json({ success: false, error: `Failed to clone template: ${error.message}` }, 500)
+  }
+})
+
+// Get user's shared templates
+app.get('/api/templates/my-shares/:userId', async (c) => {
+  const userId = c.req.param('userId')
+  
+  try {
+    const { results } = await c.env.DB.prepare(
+      'SELECT * FROM shared_templates WHERE owner_user_id = ? ORDER BY created_at DESC'
+    ).bind(userId).all()
+    
+    const sharesWithUrls = results.map((share: any) => ({
+      ...share,
+      inviteUrl: `${new URL(c.req.url).origin}/invite/${share.invite_token}`
+    }))
+    
+    return c.json({ success: true, data: sharesWithUrls })
+  } catch (error) {
+    console.error('Get my shares error:', error)
+    return c.json({ success: false, error: 'Failed to fetch shared templates' }, 500)
+  }
+})
+
+// Revoke/deactivate shared template
+app.delete('/api/templates/share/:shareId', async (c) => {
+  const shareId = c.req.param('shareId')
+  const { userId } = await c.req.json()
+  
+  try {
+    // Verify ownership before deactivating
+    const result = await c.env.DB.prepare(
+      'UPDATE shared_templates SET is_active = 0 WHERE id = ? AND owner_user_id = ?'
+    ).bind(shareId, userId).run()
+    
+    if (result.changes === 0) {
+      return c.json({ success: false, error: 'Shared template not found or access denied' }, 404)
+    }
+    
+    return c.json({ success: true, message: 'Shared template deactivated' })
+  } catch (error) {
+    console.error('Revoke share error:', error)
+    return c.json({ success: false, error: 'Failed to revoke shared template' }, 500)
   }
 })
 
@@ -273,21 +804,20 @@ app.get('/api/auth/google/callback', async (c) => {
         'INSERT INTO users (id, email, name, profile_image_url) VALUES (?, ?, ?, ?)'
       ).bind(userInfo.id, userInfo.email, userInfo.name, userInfo.picture).run()
       user = { id: userInfo.id, email: userInfo.email, name: userInfo.name, profile_image_url: userInfo.picture }
+      
+      // Seed default JTBD resources for new user
+      await seedDefaultResources(userInfo.id, c.env.DB)
     }
     
-    // Create JWT token (simplified for Cloudflare Workers)
-    const tokenPayload = {
-      id: userInfo.id,
-      email: userInfo.email,
-      name: userInfo.name,
-      exp: Math.floor(Date.now() / 1000) + (7 * 24 * 60 * 60) // 7 days
-    }
-    
-    // Simple JWT-like token for Cloudflare Workers (in production, use proper JWT library)
-    const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-    const payload = btoa(JSON.stringify(tokenPayload))
-    const signature = btoa(c.env.JWT_SECRET + header + payload) // Simplified signature
-    const jwtToken = `${header}.${payload}.${signature}`
+    // Create JWT token using unified createJWT helper
+    const jwtToken = createJWT(
+      {
+        id: userInfo.id,
+        email: userInfo.email,
+        name: userInfo.name
+      },
+      c.env.JWT_SECRET
+    )
     
     // Prepare user data for URL
     const userData = {
@@ -316,27 +846,8 @@ app.get('/api/auth/verify', async (c) => {
   const token = authHeader.substring(7)
   
   try {
-    // Parse JWT token (simplified verification)
-    const parts = token.split('.')
-    if (parts.length !== 3) {
-      return c.json({ error: 'Invalid token format' }, 401)
-    }
-    
-    const [header, payload, signature] = parts
-    
-    // Verify signature (simplified)
-    const expectedSignature = btoa(c.env.JWT_SECRET + header + payload)
-    if (signature !== expectedSignature) {
-      return c.json({ error: 'Invalid token signature' }, 401)
-    }
-    
-    // Decode payload
-    const tokenData = JSON.parse(atob(payload))
-    
-    // Check if token is expired
-    if (Date.now() / 1000 > tokenData.exp) {
-      return c.json({ error: 'Token expired' }, 401)
-    }
+    // Verify JWT token using unified verifyJWT helper
+    const tokenData = verifyJWT(token, c.env.JWT_SECRET)
     
     // Verify user exists in database
     const user = await c.env.DB.prepare(
@@ -382,6 +893,98 @@ const createJWT = (payload: any, secret: string) => {
   return `${encodedHeader}.${encodedPayload}.${signature}`
 }
 
+// Helper function to verify JWT token (handles both Google OAuth and email/password formats)
+const verifyJWT = (token: string, secret: string) => {
+  const parts = token.split('.')
+  if (parts.length !== 3) {
+    throw new Error('Invalid token format')
+  }
+  
+  const [header, payload, signature] = parts
+  
+  // Use the same signature format as createJWT function
+  // createJWT uses: btoa(secret + encodedHeader + encodedPayload)
+  // where header and payload are already base64 encoded
+  const expectedSignature = btoa(secret + header + payload)
+  
+  if (signature !== expectedSignature) {
+    throw new Error('Invalid token signature')
+  }
+  
+  // Decode and validate payload
+  const tokenData = JSON.parse(atob(payload))
+  
+  // Check if token is expired
+  if (Date.now() / 1000 > tokenData.exp) {
+    throw new Error('Token expired')
+  }
+  
+  return tokenData
+}
+
+// Helper function to seed default JTBD resources for new users
+const seedDefaultResources = async (userId: string, db: D1Database) => {
+  const defaultCategories = [
+    {
+      id: `jtbd_${userId}_1`,
+      category: 'Design Tools & Systems',
+      job: 'create consistent designs',
+      situation: 'access to design systems and tools',
+      outcome: 'work efficiently and maintain brand consistency',
+      resources: [
+        { name: 'Figma Component Library', type: 'tool', url: '#' },
+        { name: 'Design System Documentation', type: 'article', url: '#' },
+        { name: 'Brand Guidelines', type: 'guide', url: '#' }
+      ]
+    },
+    {
+      id: `jtbd_${userId}_2`,
+      category: 'Process & Workflow',
+      job: 'understand our design process',
+      situation: 'clear workflow documentation',
+      outcome: 'collaborate effectively with my team',
+      resources: [
+        { name: 'Design Process Playbook', type: 'guide', url: '#' },
+        { name: 'Critique Guidelines', type: 'guide', url: '#' },
+        { name: 'Handoff Checklist', type: 'tool', url: '#' }
+      ]
+    },
+    {
+      id: `jtbd_${userId}_3`,
+      category: 'Research & Strategy',
+      job: 'make informed design decisions',
+      situation: 'access to user research and strategy docs',
+      outcome: 'design with user needs in mind',
+      resources: [
+        { name: 'User Research Repository', type: 'tool', url: '#' },
+        { name: 'Question Bank', type: 'guide', url: '#' },
+        { name: 'Usability Testing Templates', type: 'tool', url: '#' }
+      ]
+    }
+  ]
+
+  try {
+    // Insert JTBD categories
+    for (const category of defaultCategories) {
+      await db.prepare(
+        'INSERT INTO jtbd_categories (id, user_id, category, job, situation, outcome) VALUES (?, ?, ?, ?, ?, ?)'
+      ).bind(category.id, userId, category.category, category.job, category.situation, category.outcome).run()
+      
+      // Insert resources for each category
+      for (let i = 0; i < category.resources.length; i++) {
+        const resource = category.resources[i]
+        const resourceId = `res_${userId}_${category.id}_${i + 1}`
+        await db.prepare(
+          'INSERT INTO resources (id, category_id, name, type, url) VALUES (?, ?, ?, ?, ?)'
+        ).bind(resourceId, category.id, resource.name, resource.type, resource.url).run()
+      }
+    }
+  } catch (error) {
+    console.error('Error seeding default resources:', error)
+    // Don't throw error - user creation should still succeed even if seeding fails
+  }
+}
+
 // Register new user with email/password
 app.post('/api/auth/register', async (c) => {
   const { email, password, name } = await c.req.json()
@@ -408,6 +1011,9 @@ app.post('/api/auth/register', async (c) => {
     await c.env.DB.prepare(
       'INSERT INTO users (id, email, name, password_hash) VALUES (?, ?, ?, ?)'
     ).bind(userId, email, name, passwordHash).run()
+    
+    // Seed default JTBD resources for new user
+    await seedDefaultResources(userId, c.env.DB)
     
     // Generate JWT token
     const token = createJWT(
@@ -485,22 +1091,16 @@ app.delete('/api/auth/delete-account', async (c) => {
   const token = authHeader.substring(7)
   
   try {
-    // Parse and verify JWT token
-    const parts = token.split('.')
-    if (parts.length !== 3) {
-      return c.json({ error: 'Invalid token format' }, 401)
-    }
+    // Verify JWT token using unified verifyJWT helper
+    const tokenData = verifyJWT(token, c.env.JWT_SECRET)
     
-    const [header, payload, signature] = parts
-    const expectedSignature = btoa(c.env.JWT_SECRET + header + payload)
-    if (signature !== expectedSignature) {
-      return c.json({ error: 'Invalid token signature' }, 401)
-    }
+    // Verify user exists in database
+    const user = await c.env.DB.prepare(
+      'SELECT * FROM users WHERE id = ?'
+    ).bind(tokenData.id).first()
     
-    const tokenData = JSON.parse(atob(payload))
-    
-    if (Date.now() / 1000 > tokenData.exp) {
-      return c.json({ error: 'Token expired' }, 401)
+    if (!user) {
+      return c.json({ error: 'User not found' }, 401)
     }
     
     const userId = tokenData.id
@@ -510,9 +1110,10 @@ app.delete('/api/auth/delete-account', async (c) => {
       'DELETE FROM onboarding_templates WHERE user_id = ?'
     ).bind(userId).run()
     
-    // Delete user's JTBD resources (will cascade to delete from jtbd_category_resources)
+    // Delete user's JTBD resources (resources are linked to categories, so we delete categories first which will cascade)
+    // First delete all resources that belong to this user's categories
     await c.env.DB.prepare(
-      'DELETE FROM resources WHERE user_id = ?'
+      'DELETE FROM resources WHERE category_id IN (SELECT id FROM jtbd_categories WHERE user_id = ?)'
     ).bind(userId).run()
     
     // Delete user's JTBD categories
