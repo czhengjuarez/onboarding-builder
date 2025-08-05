@@ -353,9 +353,15 @@ app.post('/api/templates/clone/:token', async (c) => {
     }
     
     // Get the original template data
+    console.log('🔍 Retrieving templates for owner_user_id:', sharedTemplate.owner_user_id)
     const { results: originalTemplates } = await c.env.DB.prepare(
       'SELECT * FROM onboarding_templates WHERE user_id = ?'
     ).bind(sharedTemplate.owner_user_id).all()
+    
+    console.log('📋 Retrieved original templates:', {
+      count: originalTemplates.length,
+      templates: originalTemplates.map(t => ({ id: t.id, title: t.title, period: t.period }))
+    })
     
     // Get the original JTBD data
     const { results: originalJtbdCategories } = await c.env.DB.prepare(
@@ -368,7 +374,10 @@ app.post('/api/templates/clone/:token', async (c) => {
     ).bind(userId).all()
     
     // Clone templates with duplicate detection
-    console.log('Cloning templates with duplicate detection:', originalTemplates.length)
+    console.log('🔄 Starting template cloning process:', {
+      originalCount: originalTemplates.length,
+      existingCount: existingTemplates.length
+    })
     let templatesAdded = 0
     let templatesSkipped = 0
     
@@ -385,7 +394,7 @@ app.post('/api/templates/clone/:token', async (c) => {
       }
       
       const newId = crypto.randomUUID()
-      console.log('Adding new template:', {
+      console.log('✅ Adding new template:', {
         id: newId,
         userId,
         period: template.period,
@@ -394,7 +403,7 @@ app.post('/api/templates/clone/:token', async (c) => {
         completed: false
       })
       
-      await c.env.DB.prepare(
+      const insertResult = await c.env.DB.prepare(
         'INSERT INTO onboarding_templates (id, user_id, period, title, priority, completed) VALUES (?, ?, ?, ?, ?, ?)'
       ).bind(
         newId, 
@@ -405,6 +414,7 @@ app.post('/api/templates/clone/:token', async (c) => {
         false
       ).run()
       
+      console.log('📝 Template insert result:', insertResult)
       templatesAdded++
     }
     
@@ -517,6 +527,17 @@ app.post('/api/templates/clone/:token', async (c) => {
       // This is an approximation since we don't have the exact count here
       return total + (cat.resources?.length || 0)
     }, 0)
+    
+    console.log('📊 Final cloning results:', {
+      totalTemplatesProcessed,
+      templatesAdded,
+      templatesSkipped,
+      totalCategoriesProcessed,
+      categoriesAdded,
+      categoriesMerged,
+      resourcesAdded,
+      resourcesSkipped
+    })
     
     let message = 'Content successfully merged into your account!'
     const details: string[] = []
