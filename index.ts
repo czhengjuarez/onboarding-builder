@@ -805,7 +805,8 @@ app.get('/api/auth/google/callback', async (c) => {
       ).bind(userInfo.id, userInfo.email, userInfo.name, userInfo.picture).run()
       user = { id: userInfo.id, email: userInfo.email, name: userInfo.name, profile_image_url: userInfo.picture }
       
-      // Seed default JTBD resources for new user
+      // Seed default templates and JTBD resources for new user
+      await seedDefaultTemplates(userInfo.id, c.env.DB)
       await seedDefaultResources(userInfo.id, c.env.DB)
     }
     
@@ -923,6 +924,59 @@ const verifyJWT = (token: string, secret: string) => {
 }
 
 // Helper function to seed default JTBD resources for new users
+const seedDefaultTemplates = async (userId: string, db: D1Database) => {
+  const defaultTemplates = [
+    // First Day
+    { period: 'firstDay', title: 'Complete IT setup and access accounts', priority: 'high' },
+    { period: 'firstDay', title: 'Meet your direct manager and team', priority: 'high' },
+    { period: 'firstDay', title: 'Review job description and expectations', priority: 'high' },
+    { period: 'firstDay', title: 'Complete required HR paperwork', priority: 'medium' },
+    { period: 'firstDay', title: 'Take office tour and locate key areas', priority: 'medium' },
+    
+    // First Week
+    { period: 'firstWeek', title: 'Schedule 1:1s with key stakeholders', priority: 'high' },
+    { period: 'firstWeek', title: 'Review company handbook and policies', priority: 'medium' },
+    { period: 'firstWeek', title: 'Set up development environment', priority: 'high' },
+    { period: 'firstWeek', title: 'Join relevant Slack channels and meetings', priority: 'medium' },
+    { period: 'firstWeek', title: 'Complete security and compliance training', priority: 'medium' },
+    
+    // Second Week
+    { period: 'secondWeek', title: 'Shadow team members on current projects', priority: 'high' },
+    { period: 'secondWeek', title: 'Review codebase and documentation', priority: 'high' },
+    { period: 'secondWeek', title: 'Attend team retrospective and planning', priority: 'medium' },
+    
+    // Third Week
+    { period: 'thirdWeek', title: 'Take on first small project or task', priority: 'high' },
+    { period: 'thirdWeek', title: 'Provide feedback on onboarding process', priority: 'low' },
+    
+    // First Month
+    { period: 'firstMonth', title: 'Complete 30-day check-in with manager', priority: 'high' },
+    { period: 'firstMonth', title: 'Set goals for next 60 days', priority: 'medium' }
+  ]
+
+  try {
+    // Insert default templates
+    for (const template of defaultTemplates) {
+      const templateId = crypto.randomUUID()
+      await db.prepare(
+        'INSERT INTO onboarding_templates (id, user_id, period, title, priority, completed) VALUES (?, ?, ?, ?, ?, ?)'
+      ).bind(
+        templateId,
+        userId,
+        template.period,
+        template.title,
+        template.priority,
+        false
+      ).run()
+    }
+    
+    console.log(`✅ Successfully seeded ${defaultTemplates.length} default templates for user ${userId}`)
+  } catch (error) {
+    console.error('❌ Error seeding default templates:', error)
+    throw error
+  }
+}
+
 const seedDefaultResources = async (userId: string, db: D1Database) => {
   const defaultCategories = [
     {
@@ -1012,7 +1066,8 @@ app.post('/api/auth/register', async (c) => {
       'INSERT INTO users (id, email, name, password_hash) VALUES (?, ?, ?, ?)'
     ).bind(userId, email, name, passwordHash).run()
     
-    // Seed default JTBD resources for new user
+    // Seed default templates and JTBD resources for new user
+    await seedDefaultTemplates(userId, c.env.DB)
     await seedDefaultResources(userId, c.env.DB)
     
     // Generate JWT token

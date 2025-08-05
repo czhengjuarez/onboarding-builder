@@ -1,8 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import App from './App.tsx';
-// Note the change here to import App.css
-import './App.css'; 
+import App from './App';
+import '../App-polished.css'; 
 
 const container = document.getElementById('root');
 const root = createRoot(container);
