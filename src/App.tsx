@@ -863,6 +863,8 @@ function App() {
     const [isCloningTemplate, setIsCloningTemplate] = useState(false);
     const [showCloneConfirmation, setShowCloneConfirmation] = useState(false);
     const [cloneConfirmationData, setCloneConfirmationData] = useState<any>(null);
+    const [showDuplicateCloneConfirmation, setShowDuplicateCloneConfirmation] = useState(false);
+    const [duplicateCloneData, setDuplicateCloneData] = useState<any>(null);
     
     // Version management state
     const [versions, setVersions] = useState<Version[]>([]);
@@ -934,28 +936,52 @@ function App() {
                     console.log('🔍 Frontend: Setting versions:', result.data?.length || 0, 'versions');
                     setVersions(result.data || []);
                     
-                    // Set current version to default or first version
-                    const defaultVersion = result.data?.find((v: Version) => v.is_default);
-                    console.log('🔍 Frontend: Default version found:', defaultVersion);
-                    
-                    if (defaultVersion) {
-                        console.log('🔍 Frontend: Setting current version to default:', defaultVersion.name);
-                        setCurrentVersion(defaultVersion);
-                    } else if (result.data?.length > 0) {
-                        console.log('🔍 Frontend: Setting current version to first:', result.data[0].name);
-                        setCurrentVersion(result.data[0]);
+                    // Only set current version to default if no current version is set
+                    // This preserves intentional version switches (like after cloning)
+                    if (!currentVersion) {
+                        const defaultVersion = result.data?.find((v: Version) => v.is_default);
+                        console.log('🔍 Frontend: No current version set, default version found:', defaultVersion);
+                        
+                        if (defaultVersion) {
+                            console.log('🔍 Frontend: Setting current version to default:', defaultVersion.name);
+                            setCurrentVersion(defaultVersion);
+                        } else if (result.data?.length > 0) {
+                            console.log('🔍 Frontend: Setting current version to first:', result.data[0].name);
+                            setCurrentVersion(result.data[0]);
+                        } else {
+                            console.log('🔍 Frontend: No versions found, clearing current version');
+                            setCurrentVersion(null);
+                        }
                     } else {
-                        console.log('🔍 Frontend: No versions found, clearing current version');
-                        setCurrentVersion(null);
+                        console.log('🔍 Frontend: Current version already set:', currentVersion.name, '- preserving it');
+                        // Verify the current version still exists in the updated versions list
+                        const stillExists = result.data?.find((v: Version) => v.id === currentVersion.id);
+                        if (!stillExists) {
+                            console.log('⚠️ Frontend: Current version no longer exists, switching to default');
+                            const defaultVersion = result.data?.find((v: Version) => v.is_default);
+                            if (defaultVersion) {
+                                setCurrentVersion(defaultVersion);
+                            } else if (result.data?.length > 0) {
+                                setCurrentVersion(result.data[0]);
+                            } else {
+                                setCurrentVersion(null);
+                            }
+                        }
                     }
+                    
+                    // Return the fresh versions data for use by callers
+                    return result.data || [];
                 } else {
                     console.log('🔍 Frontend: Version loading failed:', result.error);
+                    return [];
                 }
             } else {
                 console.log('🔍 Frontend: Version loading request failed with status:', response.status);
+                return [];
             }
         } catch (error) {
             console.error('🔍 Frontend: Error loading versions:', error);
+            return [];
         } finally {
             setVersionsLoading(false);
         }
@@ -2173,14 +2199,35 @@ function App() {
                 console.log('🔄 [Clone] Current versions before reload:', versions.length, 'versions');
                 
                 // First reload versions to get the newly created clone version
-                await loadVersions();
+                const freshVersions = await loadVersions();
                 
                 console.log('🔄 [Clone] Versions reloaded, checking updated state...');
-                // Add a small delay to ensure state updates are processed
-                setTimeout(() => {
-                    console.log('🔄 [Clone] Versions after reload:', versions.length, 'versions');
-                    console.log('🔄 [Clone] Version names:', versions.map(v => v.name));
-                }, 100);
+                
+                // Auto-switch to the newly cloned version for immediate visual feedback
+                if (result.data?.versionId) {
+                    console.log('🎯 [Clone] Switching to newly cloned version:', result.data.versionId);
+                    // Find the newly created version using fresh versions data
+                    const newVersion = freshVersions.find(v => v.id === result.data.versionId);
+                    if (newVersion) {
+                        setCurrentVersion(newVersion);
+                        await loadData(newVersion.id);
+                        console.log('✅ [Clone] Successfully switched to new version:', newVersion.name);
+                    } else {
+                        console.log('⚠️ [Clone] New version not found in fresh data, trying retry...');
+                        // If not found immediately, try after a short delay for state updates
+                        setTimeout(async () => {
+                            const retryVersions = await loadVersions(); // Reload versions again
+                            const retryVersion = retryVersions.find(v => v.id === result.data.versionId);
+                            if (retryVersion) {
+                                setCurrentVersion(retryVersion);
+                                await loadData(retryVersion.id);
+                                console.log('✅ [Clone] Successfully switched to new version (retry):', retryVersion.name);
+                            } else {
+                                console.log('❌ [Clone] Failed to find new version even after retry');
+                            }
+                        }, 500);
+                    }
+                }
                 
                 console.log('🔄 [Clone] Switching to templates tab');
                 // Switch to templates tab to show cloned templates
@@ -2191,6 +2238,11 @@ function App() {
                 console.log('Clone requires confirmation for existing user');
                 setCloneConfirmationData(result);
                 setShowCloneConfirmation(true);
+                setShowCloneModal(false);
+            } else if (result.requiresDuplicateConfirmation) {
+                console.log('Duplicate clone detected, asking user for overwrite confirmation');
+                setDuplicateCloneData(result);
+                setShowDuplicateCloneConfirmation(true);
                 setShowCloneModal(false);
             } else {
                 console.error('Clone failed:', result.error);
@@ -2249,14 +2301,35 @@ function App() {
                 console.log('🔄 [Clone Confirm] Current versions before reload:', versions.length, 'versions');
                 
                 // Reload versions to get the newly created clone version
-                await loadVersions();
+                const freshVersions = await loadVersions();
                 
                 console.log('🔄 [Clone Confirm] Versions reloaded, checking updated state...');
-                // Add a small delay to ensure state updates are processed
-                setTimeout(() => {
-                    console.log('🔄 [Clone Confirm] Versions after reload:', versions.length, 'versions');
-                    console.log('🔄 [Clone Confirm] Version names:', versions.map(v => v.name));
-                }, 100);
+                
+                // Auto-switch to the newly cloned version for immediate visual feedback
+                if (result.data?.versionId) {
+                    console.log('🎯 [Clone Confirm] Switching to newly cloned version:', result.data.versionId);
+                    // Find the newly created version using fresh versions data
+                    const newVersion = freshVersions.find(v => v.id === result.data.versionId);
+                    if (newVersion) {
+                        setCurrentVersion(newVersion);
+                        await loadData(newVersion.id);
+                        console.log('✅ [Clone Confirm] Successfully switched to new version:', newVersion.name);
+                    } else {
+                        console.log('⚠️ [Clone Confirm] New version not found in fresh data, trying retry...');
+                        // If not found immediately, try after a short delay for state updates
+                        setTimeout(async () => {
+                            const retryVersions = await loadVersions(); // Reload versions again
+                            const retryVersion = retryVersions.find(v => v.id === result.data.versionId);
+                            if (retryVersion) {
+                                setCurrentVersion(retryVersion);
+                                await loadData(retryVersion.id);
+                                console.log('✅ [Clone Confirm] Successfully switched to new version (retry):', retryVersion.name);
+                            } else {
+                                console.log('❌ [Clone Confirm] Failed to find new version even after retry');
+                            }
+                        }, 500);
+                    }
+                }
                 
                 console.log('🔄 [Clone Confirm] Switching to templates tab');
                 setActiveTab('templates');
@@ -2277,6 +2350,83 @@ function App() {
     const handleCancelClone = () => {
         setShowCloneConfirmation(false);
         setCloneConfirmationData(null);
+        setInviteToken(null);
+        setSharedTemplateData(null);
+        // Redirect to home page
+        window.history.replaceState({}, document.title, '/');
+    };
+
+    // Duplicate clone confirmation handlers
+    const handleOverwriteClone = async () => {
+        if (!inviteToken || !user?.id || !token) {
+            console.error('Missing required data for overwrite clone');
+            return;
+        }
+
+        setIsCloningTemplate(true);
+        console.log('🔄 [Overwrite Clone] Starting overwrite clone process...');
+
+        try {
+            const response = await fetch(`/api/templates/clone/${inviteToken}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    userId: user.id,
+                    overwrite: true // This tells backend to overwrite existing version
+                })
+            });
+
+            const result = await response.json();
+            console.log('Overwrite clone API result:', result);
+
+            if (result.success) {
+                alert(`Template overwritten successfully! ${result.message || 'The shared content has replaced your existing version.'}`);                
+                
+                setShowDuplicateCloneConfirmation(false);
+                setDuplicateCloneData(null);
+                setInviteToken(null);
+                setSharedTemplateData(null);
+                
+                // Redirect to home page and reload data
+                window.history.replaceState({}, document.title, '/');
+                
+                console.log('🔄 [Overwrite Clone] Reloading versions list...');
+                
+                // Reload versions and switch to the new version
+                const freshVersions = await loadVersions();
+                
+                // Auto-switch to the newly cloned version
+                if (result.data?.versionId) {
+                    console.log('🎯 [Overwrite Clone] Switching to overwritten version:', result.data.versionId);
+                    const newVersion = freshVersions.find(v => v.id === result.data.versionId);
+                    if (newVersion) {
+                        setCurrentVersion(newVersion);
+                        await loadData(newVersion.id);
+                        console.log('✅ [Overwrite Clone] Successfully switched to overwritten version:', newVersion.name);
+                    }
+                }
+                
+                setActiveTab('templates');
+                console.log('✅ [Overwrite Clone] Overwrite process completed successfully');
+            } else {
+                console.error('Overwrite clone failed:', result.error);
+                alert('Failed to overwrite template: ' + result.error);
+            }
+        } catch (error) {
+            console.error('Error in overwrite clone:', error);
+            alert('Failed to overwrite template');
+        } finally {
+            setIsCloningTemplate(false);
+        }
+    };
+
+    const handleIgnoreDuplicateClone = () => {
+        console.log('🚫 [Ignore Clone] User chose to ignore duplicate clone');
+        setShowDuplicateCloneConfirmation(false);
+        setDuplicateCloneData(null);
         setInviteToken(null);
         setSharedTemplateData(null);
         // Redirect to home page
@@ -3797,6 +3947,74 @@ function App() {
                                 >
                                     {!isCloningTemplate && <PlusIcon />}
                                     {isCloningTemplate ? 'Adding...' : 'Add to My Data'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Duplicate Clone Confirmation Modal */}
+            {showDuplicateCloneConfirmation && duplicateCloneData && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={(e) => {
+                    if (e.target === e.currentTarget) {
+                        handleIgnoreDuplicateClone();
+                    }
+                }}>
+                    <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-lg font-semibold text-gray-900">Duplicate Template Detected</h3>
+                            <button
+                                onClick={handleIgnoreDuplicateClone}
+                                className="text-gray-400 hover:text-gray-600"
+                            >
+                                <XMarkIcon />
+                            </button>
+                        </div>
+                        
+                        <div className="space-y-4">
+                            <div className="text-center">
+                                <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-orange-100 mb-4">
+                                    <svg className="h-6 w-6 text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                                    </svg>
+                                </div>
+                                <h4 className="text-lg font-semibold text-gray-900 mb-2">Already Cloned</h4>
+                                <p className="text-gray-600 mb-4">{duplicateCloneData.message}</p>
+                            </div>
+                            
+                            <div className="bg-gray-50 p-4 rounded-md">
+                                <h5 className="font-medium text-gray-900 mb-2">Your existing version:</h5>
+                                <div className="text-sm text-gray-600 space-y-1">
+                                    <div><strong>Name:</strong> {duplicateCloneData.existingVersion?.name}</div>
+                                    <div><strong>Description:</strong> {duplicateCloneData.existingVersion?.description || 'No description'}</div>
+                                    <div><strong>Created:</strong> {duplicateCloneData.existingVersion?.created_at ? new Date(duplicateCloneData.existingVersion.created_at).toLocaleDateString() : 'Unknown'}</div>
+                                </div>
+                            </div>
+                            
+                            <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4">
+                                <p className="text-yellow-800 text-sm mb-3">
+                                    <strong>Choose what to do:</strong>
+                                </p>
+                                <ul className="text-yellow-700 text-sm space-y-1">
+                                    <li>• <strong>Overwrite:</strong> Replace your existing version with the latest shared content</li>
+                                    <li>• <strong>Ignore:</strong> Keep your existing version unchanged</li>
+                                </ul>
+                            </div>
+                            
+                            <div className="flex gap-3 pt-4">
+                                <button
+                                    onClick={handleIgnoreDuplicateClone}
+                                    className="flex-1 px-4 py-2 text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+                                >
+                                    Ignore
+                                </button>
+                                <button
+                                    onClick={handleOverwriteClone}
+                                    disabled={isCloningTemplate}
+                                    className="flex-1 px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+                                >
+                                    {isCloningTemplate ? 'Overwriting...' : 'Overwrite'}
                                 </button>
                             </div>
                         </div>
