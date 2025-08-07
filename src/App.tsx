@@ -875,6 +875,10 @@ function App() {
     const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
     const [versionToDelete, setVersionToDelete] = useState<Version | null>(null);
     const [isDeletingVersion, setIsDeletingVersion] = useState(false);
+    const [showShareDeleteConfirm, setShowShareDeleteConfirm] = useState(false);
+    const [shareToDelete, setShareToDelete] = useState<{id: string, title: string} | null>(null);
+    const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+    const [autoSaveTimeoutId, setAutoSaveTimeoutId] = useState<NodeJS.Timeout | null>(null);
 
     // --- Helper Functions ---
     const getResourceTypeIcon = (type: Resource['type']) => ({
@@ -1906,6 +1910,171 @@ function App() {
         }
     };
 
+    const handleDeleteShare = (shareId: string, shareTitle: string) => {
+        setShareToDelete({ id: shareId, title: shareTitle });
+        setShowShareDeleteConfirm(true);
+    };
+
+    const confirmDeleteShare = async () => {
+        if (!user || !shareToDelete) return;
+        
+        try {
+            const response = await fetch(`/api/templates/share/${shareToDelete.id}/delete`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ userId: user.id })
+            });
+            
+            const result = await response.json();
+            if (result.success) {
+                console.log('✅ Share deleted successfully');
+                loadMyShares(); // Refresh the list
+                setShowShareDeleteConfirm(false);
+                setShareToDelete(null);
+            } else {
+                console.error('❌ Failed to delete share:', result.error);
+                alert('Failed to delete share: ' + result.error);
+            }
+        } catch (error) {
+            console.error('❌ Error deleting share:', error);
+            alert('Failed to delete share');
+        }
+    };
+
+    const cancelDeleteShare = () => {
+        setShowShareDeleteConfirm(false);
+        setShareToDelete(null);
+    };
+
+    // Auto-save functionality
+    const performAutoSave = async () => {
+        if (!user || !currentVersion) {
+            console.log('⚠️ Auto-save skipped: No user or version');
+            return;
+        }
+
+        setAutoSaveStatus('saving');
+        console.log('💾 Auto-save: Starting save process');
+
+        try {
+            // Save templates
+            const templatePromises = Object.entries(onboardingTemplate).flatMap(([period, tasks]) =>
+                tasks.map(async (task) => {
+                    if (task.id.startsWith('temp-')) {
+                        // New task - create it
+                        const response = await fetch('/api/templates', {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${token}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                ...task,
+                                period,
+                                userId: user.id,
+                                versionId: currentVersion.id
+                            })
+                        });
+                        if (!response.ok) throw new Error(`Failed to save template: ${task.title}`);
+                    } else {
+                        // Existing task - update it
+                        const response = await fetch(`/api/templates/${task.id}`, {
+                            method: 'PUT',
+                            headers: {
+                                'Authorization': `Bearer ${token}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                ...task,
+                                period,
+                                userId: user.id,
+                                versionId: currentVersion.id
+                            })
+                        });
+                        if (!response.ok) throw new Error(`Failed to update template: ${task.title}`);
+                    }
+                })
+            );
+
+            // Save JTBD resources
+            const resourcePromises = jtbdResources.map(async (category) => {
+                const response = await fetch(`/api/jtbd/${user.id}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        categories: jtbdResources,
+                        versionId: currentVersion.id
+                    })
+                });
+                if (!response.ok) throw new Error('Failed to save JTBD resources');
+            });
+
+            // Wait for all saves to complete
+            await Promise.all([...templatePromises, ...resourcePromises]);
+
+            setAutoSaveStatus('saved');
+            console.log('✅ Auto-save: All data saved successfully');
+            
+            // Reset to idle after 2 seconds
+            setTimeout(() => setAutoSaveStatus('idle'), 2000);
+
+        } catch (error) {
+            console.error('❌ Auto-save failed:', error);
+            setAutoSaveStatus('error');
+            setTimeout(() => setAutoSaveStatus('idle'), 3000);
+        }
+    };
+
+    // Debounced auto-save trigger
+    const triggerAutoSave = () => {
+        if (autoSaveTimeoutId) {
+            clearTimeout(autoSaveTimeoutId);
+        }
+        
+        const timeoutId = setTimeout(() => {
+            performAutoSave();
+        }, 2000); // 2 second delay
+        
+        setAutoSaveTimeoutId(timeoutId);
+    };
+
+    // Auto-save effect - triggers on version changes and data modifications
+    useEffect(() => {
+        if (user && currentVersion && (onboardingTemplate || jtbdResources.length > 0)) {
+            // Trigger auto-save when version changes or after data loads
+            const timer = setTimeout(() => {
+                if (autoSaveStatus === 'idle') {
+                    triggerAutoSave();
+                }
+            }, 5000); // 5 second delay after version/data changes
+            
+            return () => clearTimeout(timer);
+        }
+    }, [currentVersion?.id, onboardingTemplate, jtbdResources]);
+
+    // Cleanup auto-save timeout on unmount
+    useEffect(() => {
+        return () => {
+            if (autoSaveTimeoutId) {
+                clearTimeout(autoSaveTimeoutId);
+            }
+        };
+    }, []);
+
+    // Reset image error state when user picture changes
+    useEffect(() => {
+        if (user?.picture) {
+            console.log('🖼️ User picture changed, resetting image error state for fresh load attempt');
+            setImageError(false);
+        }
+    }, [user?.picture]);
+
     const handleOpenShareModal = () => {
         setShowShareModal(true);
         setGeneratedInviteLink(null);
@@ -2483,9 +2652,24 @@ function App() {
                                             src={user.picture} 
                                             alt="Profile" 
                                             className="w-8 h-8 rounded-full object-cover" 
+                                            crossOrigin="anonymous"
+                                            referrerPolicy="no-referrer"
                                             onError={() => {
-                                                console.log('🖼️ Profile image failed to load (Google CORS restriction), using initials fallback');
-                                                setImageError(true);
+                                                console.log('🖼️ Profile image failed to load (Google CORS restriction), trying alternative approach');
+                                                // Try alternative Google profile image URL format
+                                                const img = new Image();
+                                                img.crossOrigin = 'anonymous';
+                                                img.onload = () => {
+                                                    console.log('🖼️ Alternative profile image loaded successfully');
+                                                    // Image loaded successfully with alternative approach
+                                                };
+                                                img.onerror = () => {
+                                                    console.log('🖼️ Alternative profile image also failed, using initials fallback');
+                                                    setImageError(true);
+                                                };
+                                                // Try with different size parameter or direct Google Photos URL
+                                                const altUrl = user.picture?.replace(/=s\d+/, '=s96').replace(/\?.*/, '') || user.picture;
+                                                if (altUrl) img.src = altUrl;
                                             }}
                                             onLoad={() => {
                                                 console.log('🖼️ Profile image loaded successfully');
@@ -2584,11 +2768,13 @@ function App() {
                                                 }}
                                                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                                             >
-                                                {versions.map(version => (
-                                                    <option key={version.id} value={version.id}>
-                                                        {version.name} {version.is_default ? '(Default)' : ''}
-                                                    </option>
-                                                ))}
+                                                {versions
+                                                    .sort((a, b) => a.name.localeCompare(b.name))
+                                                    .map(version => (
+                                                        <option key={version.id} value={version.id}>
+                                                            {version.name} {version.is_default ? '(Default)' : ''}
+                                                        </option>
+                                                    ))}
                                             </select>
                                         </div>
                                         
@@ -2659,6 +2845,15 @@ function App() {
                                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3-3m0 0l-3 3m3-3v12" />
                                                 </svg>
                                                 Save Version
+                                                {autoSaveStatus === 'saving' && (
+                                                    <span className="ml-2 text-xs text-blue-600">(Auto-saving...)</span>
+                                                )}
+                                                {autoSaveStatus === 'saved' && (
+                                                    <span className="ml-2 text-xs text-green-600">✓ Saved</span>
+                                                )}
+                                                {autoSaveStatus === 'error' && (
+                                                    <span className="ml-2 text-xs text-red-600">⚠ Error</span>
+                                                )}
                                             </button>
                                             <button 
                                                 onClick={() => {
@@ -2778,7 +2973,7 @@ function App() {
                                             />
                                             <button
                                                 onClick={() => handleGuestAction(() => addTask(selectedPeriod), 'add')}
-                                                className="btn-primary-enhanced w-full sm:w-auto sm:flex-shrink-0"
+                                                className="w-full sm:w-auto sm:flex-shrink-0 flex items-center justify-center gap-2 bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 transition-colors font-medium"
                                             >
                                                 <PlusIcon />
                                                 Add
@@ -2853,7 +3048,7 @@ function App() {
                                 </div>
                                 <button 
                                     onClick={() => handleGuestAction(handleAddJTBDResource, 'add')} 
-                                    className="w-full sm:w-auto flex items-center justify-center gap-2 bg-primary-500 text-white px-4 py-2 rounded-md hover:bg-primary-600 transition-colors font-medium"
+                                    className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 transition-colors font-medium"
                                 >
                                     <PlusIcon />
                                     Add Resource Category
@@ -2993,8 +3188,9 @@ function App() {
                                                     />
                                                     <button
                                                         onClick={() => handleGuestAction(() => handleAddResourceToCategory(resource.id), 'add')}
-                                                        className="px-3 py-1 text-sm bg-primary-500 text-white rounded hover:bg-primary-600 transition-colors"
+                                                        className="px-3 py-1 text-sm bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors flex items-center gap-1"
                                                     >
+                                                        <PlusIcon />
                                                         Add
                                                     </button>
                                                 </div>
@@ -3369,6 +3565,15 @@ function App() {
                                                         Revoke
                                                     </button>
                                                 )}
+                                                <button
+                                                    onClick={() => handleDeleteShare(share.id, share.title)}
+                                                    className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                                                    title="Delete share record"
+                                                >
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                                    </svg>
+                                                </button>
                                             </div>
                                         </div>
                                     </div>
@@ -3383,6 +3588,39 @@ function App() {
                             >
                                 Close
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Share Delete Confirmation Modal */}
+            {showShareDeleteConfirm && shareToDelete && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-lg p-6 max-w-sm w-full mx-4">
+                        <div className="text-center">
+                            <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100 mb-4">
+                                <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                                </svg>
+                            </div>
+                            <h3 className="text-lg font-medium text-gray-900 mb-2">Delete Share</h3>
+                            <p className="text-sm text-gray-500 mb-6">
+                                Are you sure you want to permanently delete <strong>"{shareToDelete.title}"</strong>? This cannot be undone.
+                            </p>
+                            <div className="flex gap-3 justify-center">
+                                <button
+                                    onClick={cancelDeleteShare}
+                                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={confirmDeleteShare}
+                                    className="px-4 py-2 text-sm font-medium text-white bg-red-600 border border-transparent rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                                >
+                                    Delete
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -3555,8 +3793,9 @@ function App() {
                                 <button
                                     onClick={handleConfirmedClone}
                                     disabled={isCloningTemplate}
-                                    className="flex-1 px-4 py-2 bg-primary-500 text-white rounded-md hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                    className="flex-1 px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
                                 >
+                                    {!isCloningTemplate && <PlusIcon />}
                                     {isCloningTemplate ? 'Adding...' : 'Add to My Data'}
                                 </button>
                             </div>

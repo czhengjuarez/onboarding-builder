@@ -595,7 +595,39 @@ app.get('/api/templates/my-shares/:userId', async (c) => {
   }
 })
 
-// Revoke/deactivate shared template
+// Delete shared template record completely (more specific route first)
+app.delete('/api/templates/share/:shareId/delete', async (c) => {
+  const shareId = c.req.param('shareId')
+  const { userId } = await c.req.json()
+  
+  try {
+    // Verify ownership before deleting
+    const shareCheck = await c.env.DB.prepare(
+      'SELECT id FROM shared_templates WHERE id = ? AND owner_user_id = ?'
+    ).bind(shareId, userId).first()
+    
+    if (!shareCheck) {
+      return c.json({ success: false, error: 'Shared template not found or access denied' }, 404)
+    }
+    
+    // Delete the share record completely
+    const result = await c.env.DB.prepare(
+      'DELETE FROM shared_templates WHERE id = ? AND owner_user_id = ?'
+    ).bind(shareId, userId).run()
+    
+    if (result.changes === 0) {
+      return c.json({ success: false, error: 'Failed to delete shared template' }, 500)
+    }
+    
+    console.log(`✅ Share record deleted: ${shareId} by user ${userId}`)
+    return c.json({ success: true, message: 'Share record deleted permanently' })
+  } catch (error) {
+    console.error('❌ Delete share error:', error)
+    return c.json({ success: false, error: 'Failed to delete shared template' }, 500)
+  }
+})
+
+// Revoke/deactivate shared template (less specific route second)
 app.delete('/api/templates/share/:shareId', async (c) => {
   const shareId = c.req.param('shareId')
   const { userId } = await c.req.json()
