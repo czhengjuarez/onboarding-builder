@@ -832,6 +832,7 @@ function App() {
     const [selectedPeriod, setSelectedPeriod] = useState<string>('firstDay');
     const [isDataLoading, setIsDataLoading] = useState(false);
     const [showProfileMenu, setShowProfileMenu] = useState(false);
+    const [imageError, setImageError] = useState(false);
 
     // Onboarding template state
     const [onboardingTemplate, setOnboardingTemplate] = useState<Record<string, OnboardingItem[]>>(defaultOnboardingTemplate);
@@ -2115,6 +2116,14 @@ function App() {
 
     // --- Effects ---
 
+    // Reset image error when user changes to always try loading image first
+    useEffect(() => {
+        if (user?.picture) {
+            console.log('🖼️ [Profile Image] Attempting to load Google profile image...');
+            setImageError(false);
+        }
+    }, [user?.picture]);
+
     useEffect(() => {
         if (user && activeTab === 'templates') {
             loadOnboardingTemplates(currentVersion?.id);
@@ -2468,11 +2477,26 @@ function App() {
                                 onClick={() => setShowProfileMenu(!showProfileMenu)}
                                 className="flex items-center gap-2 p-2 rounded-lg hover:bg-gray-100 transition-colors"
                             >
-                                {user.picture ? (
-                                    <img src={user.picture} alt="Profile" className="w-8 h-8 rounded-full object-cover" />
-                                ) : (
-                                    <div className="w-8 h-8 rounded-full bg-primary-500 text-white flex items-center justify-center font-semibold">{user.name.charAt(0)}</div>
-                                )}
+                                <div className="relative w-8 h-8">
+                                    {user.picture && !imageError ? (
+                                        <img 
+                                            src={user.picture} 
+                                            alt="Profile" 
+                                            className="w-8 h-8 rounded-full object-cover" 
+                                            onError={() => {
+                                                console.log('🖼️ Profile image failed to load (Google CORS restriction), using initials fallback');
+                                                setImageError(true);
+                                            }}
+                                            onLoad={() => {
+                                                console.log('🖼️ Profile image loaded successfully');
+                                            }}
+                                        />
+                                    ) : (
+                                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary-500 to-primary-600 text-white flex items-center justify-center font-semibold text-sm shadow-sm">
+                                            {user.name.charAt(0).toUpperCase()}
+                                        </div>
+                                    )}
+                                </div>
                                 {/* Debug: Log user data - moved to useEffect to avoid render issues */}
                                 <span className="text-gray-700 font-medium">{user.name}</span>
                             </button>
@@ -2546,21 +2570,6 @@ function App() {
                                         <h3 className="font-semibold text-gray-800">Version Management</h3>
                                     </div>
                                     <div className="p-4 space-y-4">
-                                        {/* Current Version */}
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-2">Current Version</label>
-                                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                                                <div className="text-blue-900 font-medium">
-                                                    {currentVersion?.name || 'No version selected'}
-                                                </div>
-                                                {currentVersion?.description && (
-                                                    <div className="text-blue-700 text-sm mt-1">
-                                                        {currentVersion.description}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                        
                                         {/* Switch Version */}
                                         <div>
                                             <label className="block text-sm font-medium text-gray-700 mb-2">Switch Version</label>
@@ -2583,14 +2592,24 @@ function App() {
                                             </select>
                                         </div>
                                         
+                                        {/* Description */}
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
+                                            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 min-h-[60px]">
+                                                <div className="text-gray-700 text-sm">
+                                                    {currentVersion?.description || 'No description available for this version.'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
                                         {/* Create New Version */}
-                                        <div className="mb-3">
+                                        <div className="mb-2">
                                             <button 
                                                 onClick={() => {
                                                     setVersionModalMode('create');
                                                     setShowVersionModal(true);
                                                 }}
-                                                className="w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                                                className="w-full text-left px-3 py-2 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-md transition-colors flex items-center gap-2"
                                             >
                                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -2600,7 +2619,7 @@ function App() {
                                         </div>
                                         
                                         {/* Action Buttons */}
-                                        <div className="space-y-2">
+                                        <div className="space-y-1">
                                             <button 
                                                 onClick={async () => {
                                                     if (currentVersion) {
@@ -2634,7 +2653,7 @@ function App() {
                                                         alert('No version selected to save. Please create or select a version first.');
                                                     }
                                                 }}
-                                                className="w-full bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                                                className="w-full text-left px-3 py-2 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-md transition-colors flex items-center gap-2"
                                             >
                                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3-3m0 0l-3 3m3-3v12" />
@@ -2647,7 +2666,7 @@ function App() {
                                                         handleDeleteVersionClick(currentVersion);
                                                     }
                                                 }}
-                                                className="w-full bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                                                className="w-full text-left px-3 py-2 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-md transition-colors flex items-center gap-2"
                                             >
                                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />

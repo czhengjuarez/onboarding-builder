@@ -1183,8 +1183,8 @@ app.get('/api/auth/google/callback', async (c) => {
         ).bind(
           defaultVersionId,
           userInfo.id,
-          'My Default Version',
-          'Your default onboarding content',
+          'Base version',
+          'My starter version',
           1, // is_default = true
           new Date().toISOString(),
           new Date().toISOString()
@@ -1624,8 +1624,8 @@ app.post('/api/auth/register', async (c) => {
     ).bind(
       defaultVersionId,
       userId,
-      'My Default Version',
-      'Your default onboarding content',
+      'Base version',
+      'My starter version',
       1, // is_default = true
       new Date().toISOString(),
       new Date().toISOString()
@@ -1697,8 +1697,8 @@ app.post('/api/auth/login', async (c) => {
       ).bind(
         defaultVersionId,
         user.id,
-        'My Default Version',
-        'Your default onboarding content',
+        'Base version',
+        'My starter version',
         1, // is_default = true
         new Date().toISOString(),
         new Date().toISOString()
