@@ -117,6 +117,14 @@ interface JTBDResource {
     resources: Resource[];
 }
 
+interface Version {
+    id: string;
+    name: string;
+    description?: string;
+    is_default: boolean;
+    created_at: string;
+}
+
 interface User {
     id: string;
     email: string;
@@ -432,6 +440,388 @@ function AccountModal({ user, onClose, onDeleteAccount }: AccountModalProps) {
     )
 }
 
+// Delete Confirmation Modal Component
+interface DeleteConfirmModalProps {
+    version: Version | null;
+    onClose: () => void;
+    onConfirm: () => Promise<void>;
+    isDeleting: boolean;
+}
+
+function DeleteConfirmModal({ version, onClose, onConfirm, isDeleting }: DeleteConfirmModalProps) {
+    if (!version) return null;
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+                <div className="p-6">
+                    {/* Header */}
+                    <div className="flex items-center mb-4">
+                        <div className="flex-shrink-0 w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                            <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                            </svg>
+                        </div>
+                        <div className="ml-4">
+                            <h3 className="text-lg font-semibold text-gray-900">Delete Version</h3>
+                            <p className="text-sm text-gray-500">This action cannot be undone</p>
+                        </div>
+                    </div>
+                    
+                    {/* Content */}
+                    <div className="mb-6">
+                        <p className="text-gray-700">
+                            Are you sure you want to delete <span className="font-semibold text-gray-900">"{version.name}"</span>?
+                        </p>
+                        <p className="text-sm text-gray-500 mt-2">
+                            All templates and resources in this version will be permanently deleted.
+                        </p>
+                        {version.is_default && (
+                            <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-md">
+                                <p className="text-sm text-red-700 font-medium">
+                                    ⚠️ Cannot delete default version
+                                </p>
+                                <p className="text-sm text-red-600 mt-1">
+                                    Please set another version as default first.
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                    
+                    {/* Actions */}
+                    <div className="flex space-x-3">
+                        <button
+                            onClick={onClose}
+                            className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
+                            disabled={isDeleting}
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onClick={onConfirm}
+                            disabled={isDeleting || version.is_default}
+                            className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-md transition-colors"
+                        >
+                            {isDeleting ? 'Deleting...' : 'Delete Version'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// Version Management Modal Component
+interface VersionModalProps {
+    versions: Version[];
+    currentVersion: Version | null;
+    mode: 'create' | 'manage';
+    onClose: () => void;
+    onCreateVersion: (name: string, description?: string, copyFromVersionId?: string) => Promise<{ success: boolean; error?: string }>;
+    onUpdateVersion: (versionId: string, name: string, description?: string) => Promise<{ success: boolean; error?: string }>;
+    onDeleteVersion: (versionId: string) => Promise<{ success: boolean; error?: string }>;
+    onSetDefaultVersion: (versionId: string) => Promise<{ success: boolean; error?: string }>;
+}
+
+function VersionModal({ versions, currentVersion, mode, onClose, onCreateVersion, onUpdateVersion, onDeleteVersion, onSetDefaultVersion }: VersionModalProps) {
+    const [activeTab, setActiveTab] = useState<'create' | 'manage'>(mode);
+    const [formData, setFormData] = useState({ name: '', description: '', copyFromVersion: '' });
+    const [editingVersion, setEditingVersion] = useState<Version | null>(null);
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState('');
+    
+    const handleCreateVersion = async () => {
+        if (!formData.name.trim()) {
+            setError('Version name is required');
+            return;
+        }
+        
+        setIsLoading(true);
+        setError('');
+        
+        try {
+            console.log('📝 Form handler calling createVersion with:', {
+                name: formData.name.trim(),
+                description: formData.description.trim() || undefined,
+                copyFromVersion: formData.copyFromVersion || undefined
+            });
+            
+            const result = await onCreateVersion(
+                formData.name.trim(),
+                formData.description.trim() || undefined,
+                formData.copyFromVersion || undefined
+            );
+            
+            if (result.success) {
+                setFormData({ name: '', description: '', copyFromVersion: '' });
+                setActiveTab('manage');
+            } else {
+                setError(result.error || 'Failed to create version');
+            }
+        } catch (error) {
+            setError('Failed to create version');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+    
+    const handleUpdateVersion = async () => {
+        if (!editingVersion || !formData.name.trim()) {
+            setError('Version name is required');
+            return;
+        }
+        
+        setIsLoading(true);
+        setError('');
+        
+        try {
+            const result = await onUpdateVersion(
+                editingVersion.id,
+                formData.name.trim(),
+                formData.description.trim() || undefined
+            );
+            
+            if (result.success) {
+                setEditingVersion(null);
+                setFormData({ name: '', description: '', copyFromVersion: '' });
+            } else {
+                setError(result.error || 'Failed to update version');
+            }
+        } catch (error) {
+            setError('Failed to update version');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+    
+    const handleDeleteVersion = async (versionId: string) => {
+        if (!confirm('Are you sure you want to delete this version? This action cannot be undone.')) {
+            return;
+        }
+        
+        setIsLoading(true);
+        setError('');
+        
+        try {
+            const result = await onDeleteVersion(versionId);
+            if (!result.success) {
+                setError(result.error || 'Failed to delete version');
+            }
+        } catch (error) {
+            setError('Failed to delete version');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+    
+    const handleSetDefault = async (versionId: string) => {
+        setIsLoading(true);
+        setError('');
+        
+        try {
+            const result = await onSetDefaultVersion(versionId);
+            if (!result.success) {
+                setError(result.error || 'Failed to set default version');
+            }
+        } catch (error) {
+            setError('Failed to set default version');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+    
+    const startEditing = (version: Version) => {
+        setEditingVersion(version);
+        setFormData({ name: version.name, description: version.description || '', copyFromVersion: '' });
+        setError('');
+    };
+    
+    const cancelEditing = () => {
+        setEditingVersion(null);
+        setFormData({ name: '', description: '', copyFromVersion: '' });
+        setError('');
+    };
+    
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-hidden">
+                <div className="flex items-center justify-between p-6 border-b border-gray-200">
+                    <h2 className="text-xl font-semibold text-gray-900">Version Management</h2>
+                    <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+                        <XMarkIcon />
+                    </button>
+                </div>
+                
+                {/* Tabs - Only show if both modes are available (for future extensibility) */}
+                {mode === 'create' && (
+                    <div className="flex border-b border-gray-200">
+                        <div className="px-6 py-3 text-sm font-medium text-primary-600 border-b-2 border-primary-600">
+                            Create Version
+                        </div>
+                    </div>
+                )}
+                {mode === 'manage' && (
+                    <div className="flex border-b border-gray-200">
+                        <div className="px-6 py-3 text-sm font-medium text-primary-600 border-b-2 border-primary-600">
+                            Manage Versions ({versions.length})
+                        </div>
+                    </div>
+                )}
+                
+                <div className="p-6 overflow-y-auto max-h-96">
+                    {error && (
+                        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md text-red-700 text-sm">
+                            {error}
+                        </div>
+                    )}
+                    
+                    {activeTab === 'create' && (
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Version Name *</label>
+                                <input
+                                    type="text"
+                                    value={formData.name}
+                                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                                    placeholder="e.g., Engineering Team, Design Team, Remote Workers"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                                <textarea
+                                    value={formData.description}
+                                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                                    rows={3}
+                                    placeholder="Optional description for this version"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Copy From Existing Version</label>
+                                <select
+                                    value={formData.copyFromVersion}
+                                    onChange={(e) => setFormData({ ...formData, copyFromVersion: e.target.value })}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                                >
+                                    <option value="">Create from App Default Seeding Questions</option>
+                                    {versions.map(version => (
+                                        <option key={version.id} value={version.id}>
+                                            {version.name} {version.is_default ? '(Default)' : ''}
+                                        </option>
+                                    ))}
+                                </select>
+                                <p className="text-xs text-gray-500 mt-1">Choose a version to copy templates and resources from, or start with default seeding questions</p>
+                            </div>
+                            <button
+                                onClick={handleCreateVersion}
+                                disabled={isLoading || !formData.name.trim()}
+                                className="w-full bg-primary-600 text-white py-2 px-4 rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                                {isLoading ? 'Creating...' : 'Create Version'}
+                            </button>
+                        </div>
+                    )}
+                    
+                    {activeTab === 'manage' && (
+                        <div className="space-y-4">
+                            {versions.length === 0 ? (
+                                <p className="text-gray-500 text-center py-8">No versions created yet</p>
+                            ) : (
+                                versions.map(version => (
+                                    <div key={version.id} className="border border-gray-200 rounded-lg p-4">
+                                        {editingVersion?.id === version.id ? (
+                                            <div className="space-y-3">
+                                                <input
+                                                    type="text"
+                                                    value={formData.name}
+                                                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                                                />
+                                                <textarea
+                                                    value={formData.description}
+                                                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                                                    rows={2}
+                                                    placeholder="Description"
+                                                />
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        onClick={handleUpdateVersion}
+                                                        disabled={isLoading}
+                                                        className="px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700 disabled:opacity-50"
+                                                    >
+                                                        <SaveIcon />
+                                                    </button>
+                                                    <button
+                                                        onClick={cancelEditing}
+                                                        className="px-3 py-1 bg-gray-500 text-white text-sm rounded hover:bg-gray-600"
+                                                    >
+                                                        <XMarkIcon />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div>
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <div className="flex items-center gap-2">
+                                                        <h3 className="font-medium text-gray-900">{version.name}</h3>
+                                                        {version.is_default && (
+                                                            <span className="text-xs bg-primary-100 text-primary-800 px-2 py-1 rounded-full">Default</span>
+                                                        )}
+                                                        {currentVersion?.id === version.id && (
+                                                            <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">Current</span>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex gap-1">
+                                                        <button
+                                                            onClick={() => startEditing(version)}
+                                                            className="p-1 text-gray-500 hover:text-gray-700"
+                                                            title="Edit version"
+                                                        >
+                                                            <PencilIcon />
+                                                        </button>
+                                                        {!version.is_default && (
+                                                            <button
+                                                                onClick={() => handleSetDefault(version.id)}
+                                                                disabled={isLoading}
+                                                                className="p-1 text-blue-500 hover:text-blue-700 disabled:opacity-50"
+                                                                title="Set as default"
+                                                            >
+                                                                ⭐
+                                                            </button>
+                                                        )}
+                                                        {!version.is_default && (
+                                                            <button
+                                                                onClick={() => handleDeleteVersion(version.id)}
+                                                                disabled={isLoading}
+                                                                className="p-1 text-red-500 hover:text-red-700 disabled:opacity-50"
+                                                                title="Delete version"
+                                                            >
+                                                                <TrashIcon />
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                {version.description && (
+                                                    <p className="text-sm text-gray-600">{version.description}</p>
+                                                )}
+                                                <p className="text-xs text-gray-500 mt-1">
+                                                    Created: {new Date(version.created_at).toLocaleDateString()}
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
 function App() {
     // --- State Management ---
     const [user, setUser] = useState<User | null>(null)
@@ -457,7 +847,7 @@ function App() {
 
     // Template sharing state
     const [showShareModal, setShowShareModal] = useState(false);
-    const [shareFormData, setShareFormData] = useState({ title: '', description: '', expiresIn: '', maxClones: '' });
+    const [shareFormData, setShareFormData] = useState({ title: '', description: '', expiresIn: '', maxClones: '', selectedVersionId: '' });
     const [generatedInviteLink, setGeneratedInviteLink] = useState<string | null>(null);
     const [myShares, setMyShares] = useState<any[]>([]);
     const [showMySharesModal, setShowMySharesModal] = useState(false);
@@ -472,6 +862,18 @@ function App() {
     const [isCloningTemplate, setIsCloningTemplate] = useState(false);
     const [showCloneConfirmation, setShowCloneConfirmation] = useState(false);
     const [cloneConfirmationData, setCloneConfirmationData] = useState<any>(null);
+    
+    // Version management state
+    const [versions, setVersions] = useState<Version[]>([]);
+    const [currentVersion, setCurrentVersion] = useState<Version | null>(null);
+    const [versionsLoading, setVersionsLoading] = useState(false);
+    const [showVersionModal, setShowVersionModal] = useState(false);
+    const [versionModalMode, setVersionModalMode] = useState<'create' | 'manage'>('create');
+    const [versionFormData, setVersionFormData] = useState({ name: '', description: '', copyFromVersion: '' });
+    const [isCreatingVersion, setIsCreatingVersion] = useState(false);
+    const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
+    const [versionToDelete, setVersionToDelete] = useState<Version | null>(null);
+    const [isDeletingVersion, setIsDeletingVersion] = useState(false);
 
     // --- Helper Functions ---
     const getResourceTypeIcon = (type: Resource['type']) => ({
@@ -497,6 +899,200 @@ function App() {
         }
         
         return response.json() as Promise<ApiResponse<T>>;
+    };
+
+    // --- Version Management API Functions ---
+    const loadVersions = async () => {
+        if (!user?.id || !token) {
+            console.log('🔍 Frontend: Cannot load versions - missing user or token');
+            return;
+        }
+        
+        setVersionsLoading(true);
+        console.log('🔍 Frontend: Loading versions for user:', user.id);
+        
+        try {
+            const response = await fetch(`/api/versions/${user.id}`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            console.log('🔍 Frontend: Version loading response status:', response.status);
+            
+            if (response.ok) {
+                const result = await response.json();
+                console.log('🔍 Frontend: Version loading result:', result);
+                
+                if (result.success) {
+                    console.log('🔍 Frontend: Setting versions:', result.data?.length || 0, 'versions');
+                    setVersions(result.data || []);
+                    
+                    // Set current version to default or first version
+                    const defaultVersion = result.data?.find((v: Version) => v.is_default);
+                    console.log('🔍 Frontend: Default version found:', defaultVersion);
+                    
+                    if (defaultVersion) {
+                        console.log('🔍 Frontend: Setting current version to default:', defaultVersion.name);
+                        setCurrentVersion(defaultVersion);
+                    } else if (result.data?.length > 0) {
+                        console.log('🔍 Frontend: Setting current version to first:', result.data[0].name);
+                        setCurrentVersion(result.data[0]);
+                    } else {
+                        console.log('🔍 Frontend: No versions found, clearing current version');
+                        setCurrentVersion(null);
+                    }
+                } else {
+                    console.log('🔍 Frontend: Version loading failed:', result.error);
+                }
+            } else {
+                console.log('🔍 Frontend: Version loading request failed with status:', response.status);
+            }
+        } catch (error) {
+            console.error('🔍 Frontend: Error loading versions:', error);
+        } finally {
+            setVersionsLoading(false);
+        }
+    };
+    
+    const createVersion = async (name: string, description?: string, copyFromVersionId?: string) => {
+        if (!user?.id || !token) return { success: false, error: 'Not authenticated' };
+        
+        try {
+            console.log('🔍 Creating version with parameters:', {
+                userId: user.id,
+                name,
+                description,
+                copyFromVersionId
+            });
+            
+            const response = await fetch('/api/versions', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    userId: user.id,
+                    name,
+                    description,
+                    copyFromVersionId
+                })
+            });
+            
+            const result = await response.json();
+            if (result.success) {
+                await loadVersions(); // Reload versions
+                // Switch to the newly created version
+                const newVersion = result.data;
+                setCurrentVersion(newVersion);
+                await loadData(newVersion.id); // Reload data for the new version
+            }
+            return result;
+        } catch (error) {
+            console.error('Failed to create version:', error);
+            return { success: false, error: 'Failed to create version' };
+        }
+    };
+    
+    const updateVersion = async (versionId: string, name: string, description?: string) => {
+        if (!user?.id || !token) return { success: false, error: 'Not authenticated' };
+        
+        try {
+            const response = await fetch(`/api/versions/${versionId}`, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ name, description })
+            });
+            
+            const result = await response.json();
+            if (result.success) {
+                await loadVersions(); // Reload versions
+            }
+            return result;
+        } catch (error) {
+            console.error('Failed to update version:', error);
+            return { success: false, error: 'Failed to update version' };
+        }
+    };
+    
+    const deleteVersion = async (versionId: string) => {
+        if (!user?.id || !token) return { success: false, error: 'Not authenticated' };
+        
+        try {
+            const response = await fetch(`/api/versions/${versionId}`, {
+                method: 'DELETE',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            const result = await response.json();
+            if (result.success) {
+                await loadVersions(); // Reload versions
+                await loadData(); // Reload data for current version
+            }
+            return result;
+        } catch (error) {
+            console.error('Failed to delete version:', error);
+            return { success: false, error: 'Failed to delete version' };
+        }
+    };
+    
+    const setDefaultVersion = async (versionId: string) => {
+        if (!user?.id || !token) return { success: false, error: 'Not authenticated' };
+        
+        try {
+            const response = await fetch(`/api/versions/${versionId}/set-default`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            const result = await response.json();
+            if (result.success) {
+                await loadVersions(); // Reload versions
+            }
+            return result;
+        } catch (error) {
+            console.error('Failed to set default version:', error);
+            return { success: false, error: 'Failed to set default version' };
+        }
+    };
+    
+    // Delete confirmation modal handlers
+    const handleDeleteVersionClick = (version: Version) => {
+        setVersionToDelete(version);
+        setShowDeleteConfirmModal(true);
+    };
+    
+    const handleDeleteConfirm = async () => {
+        if (!versionToDelete) return;
+        
+        setIsDeletingVersion(true);
+        try {
+            const result = await deleteVersion(versionToDelete.id);
+            if (result.success) {
+                setShowDeleteConfirmModal(false);
+                setVersionToDelete(null);
+            }
+        } catch (error) {
+            console.error('Failed to delete version:', error);
+        } finally {
+            setIsDeletingVersion(false);
+        }
+    };
+    
+    const handleDeleteCancel = () => {
+        setShowDeleteConfirmModal(false);
+        setVersionToDelete(null);
     };
 
     // --- Authentication Functions ---
@@ -608,12 +1204,14 @@ function App() {
         }
     }, [isAuthenticated, shouldAutoCloneAfterAuth, inviteToken, user, token]);
     // --- Data Loading Functions ---
-    const loadOnboardingTemplates = useCallback(async () => {
+    const loadOnboardingTemplates = useCallback(async (versionId?: string) => {
         if (!user) return;
         
         try {
             setIsDataLoading(true);
-            const response = await apiCall(`/templates/${user.id}`);
+            const versionParam = versionId || currentVersion?.id;
+            const endpoint = versionParam ? `/templates/${user.id}?versionId=${versionParam}` : `/templates/${user.id}`;
+            const response = await apiCall(endpoint);
             
             if (response.success) {
                 const templateData: Record<string, OnboardingItem[]> = {};
@@ -646,13 +1244,15 @@ function App() {
         } finally {
             setIsDataLoading(false);
         }
-    }, [user]);
+    }, [user, currentVersion]);
 
-    const loadJTBDResources = useCallback(async () => {
+    const loadJTBDResources = useCallback(async (versionId?: string) => {
         if (!user) return;
         
         try {
-            const response = await apiCall(`/jtbd/${user.id}`);
+            const versionParam = versionId || currentVersion?.id;
+            const endpoint = versionParam ? `/jtbd/${user.id}?versionId=${versionParam}` : `/jtbd/${user.id}`;
+            const response = await apiCall(endpoint);
             
             if (response.success) {
                 setJtbdResources(response.data);
@@ -666,7 +1266,29 @@ function App() {
             // Fallback to default JTBD resources if database is not available
             setJtbdResources(defaultJtbdResources);
         }
-    }, [user]);
+    }, [user, currentVersion]);
+    
+    // Unified data loading function
+    const loadData = useCallback(async (versionId?: string) => {
+        await Promise.all([
+            loadOnboardingTemplates(versionId),
+            loadJTBDResources(versionId)
+        ]);
+    }, [loadOnboardingTemplates, loadJTBDResources]);
+
+    // Load versions when user is authenticated
+    useEffect(() => {
+        if (isAuthenticated && user && token) {
+            loadVersions();
+        }
+    }, [isAuthenticated, user, token]);
+
+    // Load data when current version changes
+    useEffect(() => {
+        if (isAuthenticated && user && currentVersion) {
+            loadData(currentVersion.id);
+        }
+    }, [isAuthenticated, user, currentVersion, loadData]);
 
     // --- Template Management Functions ---
     const addTask = async (period: string) => {
@@ -682,7 +1304,8 @@ function App() {
                         userId: user.id,
                         period,
                         title,
-                        priority: 'medium'
+                        priority: 'medium',
+                        versionId: currentVersion?.id
                     })
                 });
 
@@ -775,7 +1398,8 @@ function App() {
                         category: newJTBD.category,
                         job: newJTBD.job,
                         situation: newJTBD.situation,
-                        outcome: newJTBD.outcome
+                        outcome: newJTBD.outcome,
+                        versionId: currentVersion?.id
                     })
                 });
                 
@@ -1176,7 +1800,7 @@ function App() {
     // --- Template Sharing Functions ---
 
     const handleCreateShare = async () => {
-        if (!user || !shareFormData.title.trim()) return;
+        if (!user || !shareFormData.title.trim() || !shareFormData.selectedVersionId) return;
         
         setIsCreatingShare(true);
         try {
@@ -1192,7 +1816,8 @@ function App() {
                     title: shareFormData.title,
                     description: shareFormData.description,
                     expiresIn: shareFormData.expiresIn ? parseInt(shareFormData.expiresIn) : null,
-                    maxClones: shareFormData.maxClones ? parseInt(shareFormData.maxClones) : null
+                    maxClones: shareFormData.maxClones ? parseInt(shareFormData.maxClones) : null,
+                    selectedVersionId: shareFormData.selectedVersionId
                 })
             });
             
@@ -1200,7 +1825,7 @@ function App() {
             if (result.success) {
                 setGeneratedInviteLink(result.data.inviteUrl);
                 // Reset form
-                setShareFormData({ title: '', description: '', expiresIn: '', maxClones: '' });
+                setShareFormData({ title: '', description: '', expiresIn: '', maxClones: '', selectedVersionId: '' });
             } else {
                 alert('Failed to create share link: ' + result.error);
             }
@@ -1377,8 +2002,8 @@ function App() {
                 console.log('Reloading templates and resources...');
                 // Reload both templates and resources to show all cloned content
                 await Promise.all([
-                    loadOnboardingTemplates(),
-                    loadJTBDResources()
+                    loadOnboardingTemplates(currentVersion?.id),
+                    loadJTBDResources(currentVersion?.id)
                 ]);
                 
                 console.log('Data reloaded, switching to templates tab');
@@ -1444,8 +2069,8 @@ function App() {
                 
                 // Reload both templates and resources to show all content
                 await Promise.all([
-                    loadOnboardingTemplates(),
-                    loadJTBDResources()
+                    loadOnboardingTemplates(currentVersion?.id),
+                    loadJTBDResources(currentVersion?.id)
                 ]);
                 
                 setActiveTab('templates');
@@ -1474,11 +2099,11 @@ function App() {
 
     useEffect(() => {
         if (user && activeTab === 'templates') {
-            loadOnboardingTemplates();
+            loadOnboardingTemplates(currentVersion?.id);
         } else if (user && activeTab === 'jtbd') {
-            loadJTBDResources();
+            loadJTBDResources(currentVersion?.id);
         }
-    }, [user, activeTab, loadOnboardingTemplates, loadJTBDResources]);
+    }, [user, activeTab, currentVersion, loadOnboardingTemplates, loadJTBDResources]);
 
     // --- Render Functions ---
     const renderTaskItem = (task: OnboardingItem) => (
@@ -1676,6 +2301,7 @@ function App() {
                 setUser(data.user)
                 setIsAuthenticated(true)  // This was missing!
                 setShowAuthModal(false)
+                setShowProfileMenu(false)  // Close profile menu by default
                 
                 console.log('Email authentication successful, state updated:', {
                     token: !!data.token,
@@ -1798,6 +2424,9 @@ function App() {
                     <span className="sm:hidden truncate">Onboarding Builder</span>
                     {!user && <span className="text-xs sm:text-sm bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full ml-1 sm:ml-2 flex-shrink-0">Guest</span>}
                 </h1>
+                
+
+                
                 <div className="flex items-center gap-2 sm:gap-4">
                     <button onClick={() => handleGuestAction(generatePDF, 'add')} className="flex items-center gap-1 sm:gap-2 bg-white text-gray-700 px-2 sm:px-3 py-2 rounded-md hover:bg-gray-50 border border-gray-300 transition-colors text-sm font-medium">
                         <DownloadIcon />
@@ -1826,6 +2455,7 @@ function App() {
                                 ) : (
                                     <div className="w-8 h-8 rounded-full bg-primary-500 text-white flex items-center justify-center font-semibold">{user.name.charAt(0)}</div>
                                 )}
+                                {/* Debug: Log user data - moved to useEffect to avoid render issues */}
                                 <span className="text-gray-700 font-medium">{user.name}</span>
                             </button>
                             {showProfileMenu && (
@@ -1890,13 +2520,173 @@ function App() {
             <main className="p-4 sm:p-6 max-w-7xl mx-auto">
                 {activeTab === 'templates' && (
                     <div className="flex flex-col lg:flex-row gap-4 lg:gap-6">
-                        {/* Left Sidebar - Period Navigation */}
-                        <div className="w-full lg:w-64 lg:flex-shrink-0">
-                            <div className="card-enhanced">
-                                <div className="px-4 py-3 border-b border-gray-200">
-                                    <h3 className="font-semibold text-gray-800">Onboarding Periods</h3>
+                        {/* Left Sidebar - Version Management */}
+                        {user && (
+                            <div className="w-full lg:w-64 lg:flex-shrink-0">
+                                <div className="card-enhanced">
+                                    <div className="px-4 py-3 border-b border-gray-200">
+                                        <h3 className="font-semibold text-gray-800">Version Management</h3>
+                                    </div>
+                                    <div className="p-4 space-y-4">
+                                        {/* Current Version */}
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">Current Version</label>
+                                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                                                <div className="text-blue-900 font-medium">
+                                                    {currentVersion?.name || 'No version selected'}
+                                                </div>
+                                                {currentVersion?.description && (
+                                                    <div className="text-blue-700 text-sm mt-1">
+                                                        {currentVersion.description}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                        
+                                        {/* Switch Version */}
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">Switch Version</label>
+                                            <select 
+                                                value={currentVersion?.id || ''}
+                                                onChange={(e) => {
+                                                    const selectedVersion = versions.find(v => v.id === e.target.value);
+                                                    if (selectedVersion) {
+                                                        setCurrentVersion(selectedVersion);
+                                                        loadData(selectedVersion.id);
+                                                    }
+                                                }}
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                                            >
+                                                {versions.map(version => (
+                                                    <option key={version.id} value={version.id}>
+                                                        {version.name} {version.is_default ? '(Default)' : ''}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        
+                                        {/* Create New Version */}
+                                        <div className="mb-3">
+                                            <button 
+                                                onClick={() => {
+                                                    setVersionModalMode('create');
+                                                    setShowVersionModal(true);
+                                                }}
+                                                className="w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                                </svg>
+                                                Create New Version
+                                            </button>
+                                        </div>
+                                        
+                                        {/* Action Buttons */}
+                                        <div className="space-y-2">
+                                            <button 
+                                                onClick={async () => {
+                                                    if (currentVersion) {
+                                                        // Direct save action via PUT API call
+                                                        try {
+                                                            console.log('💾 Frontend: Saving version:', currentVersion.name);
+                                                            const response = await fetch(`/api/versions/${currentVersion.id}`, {
+                                                                method: 'PUT',
+                                                                headers: {
+                                                                    'Authorization': `Bearer ${token}`,
+                                                                    'Content-Type': 'application/json'
+                                                                },
+                                                                body: JSON.stringify({
+                                                                    name: currentVersion.name,
+                                                                    description: currentVersion.description
+                                                                })
+                                                            });
+                                                            
+                                                            if (response.ok) {
+                                                                // Show success feedback
+                                                                console.log('✅ Version saved successfully');
+                                                                // Don't reload versions - stay on current version after save
+                                                            } else {
+                                                                console.error('❌ Failed to save version - response not ok:', response.status);
+                                                            }
+                                                        } catch (error) {
+                                                            console.error('❌ Failed to save version:', error);
+                                                        }
+                                                    } else {
+                                                        console.log('⚠️ Cannot save - no current version selected');
+                                                        alert('No version selected to save. Please create or select a version first.');
+                                                    }
+                                                }}
+                                                className="w-full bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3-3m0 0l-3 3m3-3v12" />
+                                                </svg>
+                                                Save Version
+                                            </button>
+                                            <button 
+                                                onClick={() => {
+                                                    if (currentVersion) {
+                                                        handleDeleteVersionClick(currentVersion);
+                                                    }
+                                                }}
+                                                className="w-full bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                                </svg>
+                                                Delete Version
+                                            </button>
+                                        </div>
+                                        
+                                        {/* Advanced Settings */}
+                                        <div className="pt-2 border-t border-gray-200">
+                                            <button 
+                                                onClick={() => {
+                                                    setVersionModalMode('manage');
+                                                    setShowVersionModal(true);
+                                                }}
+                                                className="w-full text-left px-3 py-2 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-md transition-colors flex items-center gap-2"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                </svg>
+                                                Advanced Settings
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
-                                <div className="p-2">
+                            </div>
+                        )}
+                        
+                        {/* Create First Version Button for users with no versions */}
+                        {user && versions.length === 0 && !versionsLoading && (
+                            <div className="w-full lg:w-64 lg:flex-shrink-0">
+                                <div className="card-enhanced">
+                                    <div className="px-4 py-3 border-b border-gray-200">
+                                        <h3 className="font-semibold text-gray-800">Version Management</h3>
+                                    </div>
+                                    <div className="p-4 text-center">
+                                        <p className="text-gray-600 text-sm mb-4">Create your first version to get started</p>
+                                        <button
+                                            onClick={() => setShowVersionModal(true)}
+                                            className="w-full bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                                        >
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                            </svg>
+                                            Create First Version
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Main Content - Selected Period Tasks */}
+                        <div className="flex-1 min-w-0">
+                            {/* Period Navigation Tabs */}
+                            <div className="mb-6">
+                                <nav className="flex space-x-8 border-b border-gray-200">
                                     {[
                                         { key: 'firstDay', label: 'First Day' },
                                         { key: 'firstWeek', label: 'First Week' },
@@ -1907,24 +2697,21 @@ function App() {
                                         <button
                                             key={period.key}
                                             onClick={() => setSelectedPeriod(period.key)}
-                                            className={`w-full flex items-center px-3 py-2 rounded-lg text-left transition-colors ${
+                                            className={`py-3 px-1 border-b-2 font-medium text-sm transition-colors ${
                                                 selectedPeriod === period.key
-                                                    ? 'bg-primary-50 text-primary-700 border border-primary-200'
-                                                    : 'text-gray-700 hover:bg-gray-50'
+                                                    ? 'border-primary-600 text-primary-600'
+                                                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                                             }`}
                                         >
                                             {period.label}
                                         </button>
                                     ))}
-                                </div>
+                                </nav>
                             </div>
-                        </div>
-
-                        {/* Main Content - Selected Period Tasks */}
-                        <div className="flex-1 min-w-0">
+                            
                             <div className="card-enhanced">
-                                <div className="px-4 sm:px-6 py-4 border-b border-gray-200">
-                                    <h2 className="text-lg sm:text-xl font-semibold text-gray-800">
+                                <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+                                    <h2 className="text-lg font-semibold text-gray-800">
                                         {selectedPeriod === 'firstDay' && 'First Day Tasks'}
                                         {selectedPeriod === 'firstWeek' && 'First Week Tasks'}
                                         {selectedPeriod === 'secondWeek' && 'Second Week Tasks'}
@@ -2343,7 +3130,7 @@ function App() {
                                 onClick={() => {
                                     setShowShareModal(false)
                                     setGeneratedInviteLink(null)
-                                    setShareFormData({ title: '', description: '', expiresIn: '', maxClones: '' })
+                                    setShareFormData({ title: '', description: '', expiresIn: '', maxClones: '', selectedVersionId: '' })
                                 }}
                                 className="text-gray-400 hover:text-gray-600"
                             >
@@ -2375,6 +3162,25 @@ function App() {
                                     />
                                 </div>
                                 
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Version to Share *</label>
+                                    <select
+                                        value={shareFormData.selectedVersionId}
+                                        onChange={(e) => setShareFormData({ ...shareFormData, selectedVersionId: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                                    >
+                                        <option value="">Select a version to share...</option>
+                                        {versions.map((version) => (
+                                            <option key={version.id} value={version.id}>
+                                                {version.name} {version.is_default ? '(Default)' : ''}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        Only templates and resources from the selected version will be shared
+                                    </p>
+                                </div>
+                                
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
                                         <label className="block text-sm font-medium text-gray-700 mb-1">Expires in (days)</label>
@@ -2403,7 +3209,7 @@ function App() {
                                     <button
                                         onClick={() => {
                                             setShowShareModal(false)
-                                            setShareFormData({ title: '', description: '', expiresIn: '', maxClones: '' })
+                                            setShareFormData({ title: '', description: '', expiresIn: '', maxClones: '', selectedVersionId: '' })
                                         }}
                                         className="flex-1 px-4 py-2 text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
                                     >
@@ -2411,7 +3217,7 @@ function App() {
                                     </button>
                                     <button
                                         onClick={handleCreateShare}
-                                        disabled={!shareFormData.title.trim() || isCreatingShare}
+                                        disabled={!shareFormData.title.trim() || !shareFormData.selectedVersionId || isCreatingShare}
                                         className="flex-1 px-4 py-2 bg-primary-500 text-white rounded-md hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                                     >
                                         {isCreatingShare ? 'Creating...' : 'Create Share Link'}
@@ -2720,6 +3526,30 @@ function App() {
                         </div>
                     </div>
                 </div>
+            )}
+            
+            {/* Version Management Modal */}
+            {showVersionModal && (
+                <VersionModal
+                    versions={versions}
+                    currentVersion={currentVersion}
+                    mode={versionModalMode}
+                    onClose={() => setShowVersionModal(false)}
+                    onCreateVersion={createVersion}
+                    onUpdateVersion={updateVersion}
+                    onDeleteVersion={deleteVersion}
+                    onSetDefaultVersion={setDefaultVersion}
+                />
+            )}
+            
+            {/* Delete Confirmation Modal */}
+            {showDeleteConfirmModal && (
+                <DeleteConfirmModal
+                    version={versionToDelete}
+                    onClose={handleDeleteCancel}
+                    onConfirm={handleDeleteConfirm}
+                    isDeleting={isDeletingVersion}
+                />
             )}
         </div>
     );

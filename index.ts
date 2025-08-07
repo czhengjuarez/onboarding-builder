@@ -41,11 +41,23 @@ app.use('*', cors({
 // API Routes for onboarding templates
 app.get('/api/templates/:userId', async (c) => {
   const userId = c.req.param('userId')
+  const versionId = c.req.query('versionId')
   
   try {
-    const { results } = await c.env.DB.prepare(
-      'SELECT * FROM onboarding_templates WHERE user_id = ? ORDER BY period, created_at'
-    ).bind(userId).all()
+    let query = 'SELECT * FROM onboarding_templates WHERE user_id = ?'
+    let params = [userId]
+    
+    if (versionId) {
+      query += ' AND version_id = ?'
+      params.push(versionId)
+    } else {
+      // If no version specified, get data with null version_id (legacy data)
+      query += ' AND version_id IS NULL'
+    }
+    
+    query += ' ORDER BY period, created_at'
+    
+    const { results } = await c.env.DB.prepare(query).bind(...params).all()
     
     return c.json({ success: true, data: results })
   } catch (error) {
@@ -54,7 +66,7 @@ app.get('/api/templates/:userId', async (c) => {
 })
 
 app.post('/api/templates', async (c) => {
-  const { userId, period, title, priority = 'medium' } = await c.req.json()
+  const { userId, period, title, priority = 'medium', versionId } = await c.req.json()
   
   if (!userId || !period || !title) {
     return c.json({ success: false, error: 'Missing required fields' }, 400)
@@ -63,10 +75,10 @@ app.post('/api/templates', async (c) => {
   try {
     const id = crypto.randomUUID()
     await c.env.DB.prepare(
-      'INSERT INTO onboarding_templates (id, user_id, period, title, priority) VALUES (?, ?, ?, ?, ?)'
-    ).bind(id, userId, period, title, priority).run()
+      'INSERT INTO onboarding_templates (id, user_id, period, title, priority, version_id) VALUES (?, ?, ?, ?, ?, ?)'
+    ).bind(id, userId, period, title, priority, versionId || null).run()
     
-    return c.json({ success: true, data: { id, userId, period, title, priority, completed: false } })
+    return c.json({ success: true, data: { id, userId, period, title, priority, completed: false, version_id: versionId } })
   } catch (error) {
     return c.json({ success: false, error: 'Failed to create template' }, 500)
   }
@@ -116,12 +128,12 @@ app.post('/api/templates/share', async (c) => {
     const tokenData = verifyJWT(token, c.env.JWT_SECRET)
     const userId = tokenData.id
     
-    const { templateId, title, description, expiresIn, maxClones } = await c.req.json()
+    const { templateId, title, description, expiresIn, maxClones, selectedVersionId } = await c.req.json()
     
-    console.log('Share request received:', { templateId, userId, title, description, expiresIn, maxClones })
+    console.log('Share request received:', { templateId, userId, title, description, expiresIn, maxClones, selectedVersionId })
     
-    if (!title) {
-      console.log('Missing required fields:', { title })
+    if (!title || !selectedVersionId) {
+      console.log('Missing required fields:', { title, selectedVersionId })
       return c.json({ success: false, error: 'Missing required fields' }, 400)
     }
     
@@ -137,14 +149,14 @@ app.post('/api/templates/share', async (c) => {
       return c.json({ success: false, error: 'User not found' }, 404)
     }
     
-    // Check if user has any templates or JTBD resources to share
+    // Check if user has any templates or JTBD resources to share from the selected version
     const hasTemplates = await c.env.DB.prepare(
-      'SELECT COUNT(*) as count FROM onboarding_templates WHERE user_id = ?'
-    ).bind(userId).first()
+      'SELECT COUNT(*) as count FROM onboarding_templates WHERE user_id = ? AND version_id = ?'
+    ).bind(userId, selectedVersionId).first()
     
     const hasJTBDCategories = await c.env.DB.prepare(
-      'SELECT COUNT(*) as count FROM jtbd_categories WHERE user_id = ?'
-    ).bind(userId).first()
+      'SELECT COUNT(*) as count FROM jtbd_categories WHERE user_id = ? AND version_id = ?'
+    ).bind(userId, selectedVersionId).first()
     
     console.log('Content check:', { hasTemplates: hasTemplates.count, hasJTBDCategories: hasJTBDCategories.count })
     
@@ -163,11 +175,15 @@ app.post('/api/templates/share', async (c) => {
       expiresAt = new Date(now.getTime() + (expiresIn * 24 * 60 * 60 * 1000)).toISOString() // expiresIn is in days
     }
     
-    // Create shared template record
+    // Create shared template record with version reference
     const shareId = crypto.randomUUID()
+    console.log('🔍 CRITICAL DEBUG: About to insert shared template with version_id:', selectedVersionId, 'type:', typeof selectedVersionId)
+    
     await c.env.DB.prepare(
-      'INSERT INTO shared_templates (id, template_id, owner_user_id, invite_token, title, description, expires_at, max_clones) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-    ).bind(shareId, null, userId, inviteToken, title, description, expiresAt, maxClones).run()
+      'INSERT INTO shared_templates (id, template_id, owner_user_id, invite_token, title, description, expires_at, max_clones, version_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).bind(shareId, null, userId, inviteToken, title, description, expiresAt, maxClones, selectedVersionId).run()
+    
+    console.log('✅ Shared template record created with ID:', shareId, 'and version_id:', selectedVersionId)
     
     return c.json({ 
       success: true, 
@@ -307,6 +323,10 @@ app.post('/api/templates/clone/:token', async (c) => {
       'SELECT * FROM shared_templates WHERE invite_token = ? AND is_active = 1'
     ).bind(token).first()
     
+    console.log('🔍 Shared template record:', JSON.stringify(sharedTemplate, null, 2))
+    console.log('🔍 CRITICAL DEBUG: version_id value:', sharedTemplate.version_id, 'type:', typeof sharedTemplate.version_id)
+    console.log('🔍 CRITICAL DEBUG: Is version_id truthy?', !!sharedTemplate.version_id)
+    
     if (!sharedTemplate) {
       return c.json({ success: false, error: 'Shared template not found or inactive' }, 404)
     }
@@ -352,210 +372,196 @@ app.post('/api/templates/clone/:token', async (c) => {
       }
     }
     
-    // Get the original template data
-    const { results: originalTemplates } = await c.env.DB.prepare(
-      'SELECT * FROM onboarding_templates WHERE user_id = ?'
-    ).bind(sharedTemplate.owner_user_id).all()
+    // Get the original template data from the specific shared version only
+    console.log('🔍 Getting templates for version:', sharedTemplate.version_id, 'from owner:', sharedTemplate.owner_user_id)
     
-    // Get the original JTBD data
-    const { results: originalJtbdCategories } = await c.env.DB.prepare(
-      'SELECT * FROM jtbd_categories WHERE user_id = ?'
-    ).bind(sharedTemplate.owner_user_id).all()
+    // Check if version_id is null and handle accordingly
+    let originalTemplates, originalJtbdCategories
     
-    // Get user's existing templates to check for duplicates
-    const { results: existingTemplates } = await c.env.DB.prepare(
-      'SELECT * FROM onboarding_templates WHERE user_id = ?'
-    ).bind(userId).all()
+    if (!sharedTemplate.version_id) {
+      console.log('⚠️ WARNING: Shared template has no version_id! This is a legacy share - getting ALL templates from owner.')
+      console.log('🔍 Falling back to get all templates from owner (legacy behavior)')
+      
+      // Legacy behavior: get all templates from owner (for old shared templates without version_id)
+      const templatesResult = await c.env.DB.prepare(
+        'SELECT * FROM onboarding_templates WHERE user_id = ?'
+      ).bind(sharedTemplate.owner_user_id).all()
+      originalTemplates = templatesResult.results
+      
+      const jtbdResult = await c.env.DB.prepare(
+        'SELECT * FROM jtbd_categories WHERE user_id = ?'
+      ).bind(sharedTemplate.owner_user_id).all()
+      originalJtbdCategories = jtbdResult.results
+      
+    } else {
+      console.log('✅ Version-specific share detected! Getting content from version:', sharedTemplate.version_id)
+      
+      // Version-specific behavior: get only content from the specified version
+      const templatesResult = await c.env.DB.prepare(
+        'SELECT * FROM onboarding_templates WHERE user_id = ? AND version_id = ?'
+      ).bind(sharedTemplate.owner_user_id, sharedTemplate.version_id).all()
+      originalTemplates = templatesResult.results
+      
+      const jtbdResult = await c.env.DB.prepare(
+        'SELECT * FROM jtbd_categories WHERE user_id = ? AND version_id = ?'
+      ).bind(sharedTemplate.owner_user_id, sharedTemplate.version_id).all()
+      originalJtbdCategories = jtbdResult.results
+    }
     
-    // Clone templates with duplicate detection
-    console.log('Cloning templates with duplicate detection:', originalTemplates.length)
+    console.log('🔍 Retrieved', originalTemplates?.length || 0, 'templates from version', sharedTemplate.version_id || 'ALL')
+    console.log('🔍 Retrieved', originalJtbdCategories?.length || 0, 'JTBD categories from version', sharedTemplate.version_id || 'ALL')
+    
+    // Create a new version for the shared content instead of merging
+    const newVersionId = crypto.randomUUID()
+    const sharedVersionName = `Shared: ${sharedTemplate.title}`
+    const sharedVersionDescription = `Cloned from shared template: ${sharedTemplate.description || 'No description'}`
+    
+    console.log('🎆 Creating new version for shared content:', {
+      versionId: newVersionId,
+      name: sharedVersionName,
+      description: sharedVersionDescription
+    })
+    
+    // Create the new version
+    await c.env.DB.prepare(
+      'INSERT INTO template_versions (id, user_id, name, description, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).bind(
+      newVersionId,
+      userId,
+      sharedVersionName,
+      sharedVersionDescription,
+      0, // not default
+      new Date().toISOString(),
+      new Date().toISOString()
+    ).run()
+    
+    console.log('✅ New version created successfully')
+    
+    // Clone all templates into the new version (no duplicate detection needed)
+    console.log('🔄 Cloning', originalTemplates.length, 'templates into new version')
     let templatesAdded = 0
-    let templatesSkipped = 0
     
     for (const template of originalTemplates) {
-      // Check if template already exists (compare title and period)
-      const isDuplicate = existingTemplates.some(existing => 
-        existing.title === template.title && existing.period === template.period
-      )
-      
-      if (isDuplicate) {
-        console.log('Skipping duplicate template:', template.title)
-        templatesSkipped++
-        continue
-      }
-      
       const newId = crypto.randomUUID()
-      console.log('Adding new template:', {
+      console.log('Adding template to new version:', {
         id: newId,
-        userId,
-        period: template.period,
+        versionId: newVersionId,
         title: template.title,
-        priority: template.priority,
-        completed: false
+        period: template.period
       })
       
       await c.env.DB.prepare(
-        'INSERT INTO onboarding_templates (id, user_id, period, title, priority, completed) VALUES (?, ?, ?, ?, ?, ?)'
+        'INSERT INTO onboarding_templates (id, user_id, version_id, period, title, priority, completed, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
       ).bind(
         newId, 
-        userId, 
+        userId,
+        newVersionId,
         template.period || null, 
         template.title || null, 
         template.priority || null, 
-        false
+        false,
+        new Date().toISOString(),
+        new Date().toISOString()
       ).run()
       
       templatesAdded++
     }
     
-    // Get user's existing categories to enable smart merging
-    const { results: existingCategories } = await c.env.DB.prepare(
-      'SELECT * FROM jtbd_categories WHERE user_id = ?'
-    ).bind(userId).all()
-    
-    // Smart category and resource merging
-    console.log('Processing categories with smart merging:', originalJtbdCategories.length)
+    // Clone all JTBD categories into the new version (no duplicate detection needed)
+    console.log('🔄 Cloning', originalJtbdCategories.length, 'JTBD categories into new version')
     let categoriesAdded = 0
-    let categoriesMerged = 0
     let resourcesAdded = 0
-    let resourcesSkipped = 0
     
     for (const category of originalJtbdCategories) {
-      // Check if user already has a matching category (compare category name)
-      const matchingCategory = existingCategories.find(existing => 
-        existing.category === category.category
-      )
+      // Create new category in the new version
+      const newCategoryId = crypto.randomUUID()
+      console.log('Adding category to new version:', {
+        id: newCategoryId,
+        versionId: newVersionId,
+        category: category.category
+      })
       
-      let targetCategoryId
+      await c.env.DB.prepare(
+        'INSERT INTO jtbd_categories (id, user_id, version_id, category, job, situation, outcome, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(
+        newCategoryId, 
+        userId,
+        newVersionId,
+        category.category || null, 
+        category.job || null, 
+        category.situation || null, 
+        category.outcome || null,
+        new Date().toISOString(),
+        new Date().toISOString()
+      ).run()
       
-      if (matchingCategory) {
-        // Use existing category - keep user's version
-        console.log('Found matching category, merging resources into:', matchingCategory.category)
-        targetCategoryId = matchingCategory.id
-        categoriesMerged++
-      } else {
-        // Create new category
-        targetCategoryId = crypto.randomUUID()
-        console.log('Creating new category:', {
-          id: targetCategoryId,
-          userId,
-          category: category.category,
-          job: category.job,
-          situation: category.situation,
-          outcome: category.outcome
-        })
+      categoriesAdded++
+      
+      // Get resources for this category and clone them into the new version
+      console.log('🔍 About to query resources for category ID:', category.id)
+      
+      try {
+        const { results: categoryResources } = await c.env.DB.prepare(
+          'SELECT * FROM resources WHERE category_id = ?'
+        ).bind(category.id).all()
         
-        await c.env.DB.prepare(
-          'INSERT INTO jtbd_categories (id, user_id, category, job, situation, outcome) VALUES (?, ?, ?, ?, ?, ?)'
-        ).bind(
-          targetCategoryId, 
-          userId, 
-          category.category || null, 
-          category.job || null, 
-          category.situation || null, 
-          category.outcome || null
-        ).run()
+        console.log('✅ Successfully retrieved', categoryResources.length, 'resources for category:', category.category)
         
-        categoriesAdded++
-      }
-      
-      // Get resources for this category
-      const { results: resources } = await c.env.DB.prepare(
-        'SELECT * FROM resources WHERE category_id = ?'
-      ).bind(category.id).all()
-      
-      // Get existing resources in target category to check for duplicates
-      const { results: existingResources } = await c.env.DB.prepare(
-        'SELECT * FROM resources WHERE category_id = ?'
-      ).bind(targetCategoryId).all()
-      
-      console.log('Processing resources for category:', resources.length)
-      for (const resource of resources) {
-        // Check if resource already exists (compare name and URL)
-        const isDuplicateResource = existingResources.some(existing => 
-          existing.name === resource.name && existing.url === resource.url
-        )
-        
-        if (isDuplicateResource) {
-          console.log('Skipping duplicate resource:', resource.name)
-          resourcesSkipped++
-          continue
+        for (const resource of categoryResources) {
+          const newResourceId = crypto.randomUUID()
+          console.log('Adding resource to new version category:', {
+            id: newResourceId,
+            categoryId: newCategoryId,
+            name: resource.name,
+            type: resource.type
+          })
+          
+          await c.env.DB.prepare(
+            'INSERT INTO resources (id, category_id, name, type, url) VALUES (?, ?, ?, ?, ?)'
+          ).bind(
+            newResourceId,
+            newCategoryId,
+            resource.name || null,
+            resource.type || null,
+            resource.url || null
+          ).run()
+          
+          resourcesAdded++
         }
-        
-        const newResourceId = crypto.randomUUID()
-        console.log('Adding resource to category:', {
-          id: newResourceId,
-          categoryId: targetCategoryId,
-          name: resource.name,
-          type: resource.type,
-          url: resource.url
+      } catch (resourceError) {
+        console.error('❌ Error querying/inserting resources:', resourceError)
+        console.error('❌ Error details:', {
+          message: resourceError.message,
+          categoryId: category.id,
+          newCategoryId: newCategoryId
         })
-        
-        await c.env.DB.prepare(
-          'INSERT INTO resources (id, category_id, name, type, url) VALUES (?, ?, ?, ?, ?)'
-        ).bind(
-          newResourceId, 
-          targetCategoryId, 
-          resource.name || null, 
-          resource.type || null, 
-          resource.url || null
-        ).run()
-        
-        resourcesAdded++
+        // Continue without failing the entire operation
       }
     }
     
-    // Increment clone count
+    // Update clone count
     await c.env.DB.prepare(
       'UPDATE shared_templates SET clone_count = clone_count + 1 WHERE invite_token = ?'
     ).bind(token).run()
     
-    // Create detailed success message
-    const totalTemplatesProcessed = originalTemplates.length
-    const totalCategoriesProcessed = originalJtbdCategories.length
-    const totalResourcesProcessed = originalJtbdCategories.reduce((total, cat) => {
-      // This is an approximation since we don't have the exact count here
-      return total + (cat.resources?.length || 0)
-    }, 0)
-    
-    let message = 'Content successfully merged into your account!'
-    const details: string[] = []
-    
-    if (templatesAdded > 0) {
-      details.push(`${templatesAdded} new template${templatesAdded === 1 ? '' : 's'} added`)
-    }
-    if (templatesSkipped > 0) {
-      details.push(`${templatesSkipped} duplicate template${templatesSkipped === 1 ? '' : 's'} skipped`)
-    }
-    if (categoriesAdded > 0) {
-      details.push(`${categoriesAdded} new categor${categoriesAdded === 1 ? 'y' : 'ies'} created`)
-    }
-    if (categoriesMerged > 0) {
-      details.push(`${categoriesMerged} categor${categoriesMerged === 1 ? 'y' : 'ies'} merged with existing`)
-    }
-    if (resourcesAdded > 0) {
-      details.push(`${resourcesAdded} new resource${resourcesAdded === 1 ? '' : 's'} added`)
-    }
-    if (resourcesSkipped > 0) {
-      details.push(`${resourcesSkipped} duplicate resource${resourcesSkipped === 1 ? '' : 's'} skipped`)
-    }
-    
-    if (details.length > 0) {
-      message += ' ' + details.join(', ') + '.'
-    }
+    console.log('✅ Template cloning completed successfully!')
+    console.log('📊 Summary:', {
+      newVersionId,
+      versionName: sharedVersionName,
+      templatesAdded,
+      categoriesAdded,
+      resourcesAdded
+    })
     
     return c.json({ 
       success: true, 
-      message: message,
+      message: `Successfully created new version "${sharedVersionName}" with ${templatesAdded} templates, ${categoriesAdded} categories, and ${resourcesAdded} resources`,
       data: {
-        templatesProcessed: totalTemplatesProcessed,
-        templatesAdded: templatesAdded,
-        templatesSkipped: templatesSkipped,
-        categoriesProcessed: totalCategoriesProcessed,
-        categoriesAdded: categoriesAdded,
-        categoriesMerged: categoriesMerged,
-        resourcesAdded: resourcesAdded,
-        resourcesSkipped: resourcesSkipped
+        versionId: newVersionId,
+        versionName: sharedVersionName,
+        templatesAdded,
+        categoriesAdded,
+        resourcesAdded
       }
     })
   } catch (error) {
@@ -614,12 +620,24 @@ app.delete('/api/templates/share/:shareId', async (c) => {
 // API Routes for JTBD categories and resources
 app.get('/api/jtbd/:userId', async (c) => {
   const userId = c.req.param('userId')
+  const versionId = c.req.query('versionId')
   
   try {
     // Get JTBD categories with their resources
-    const { results: categories } = await c.env.DB.prepare(
-      'SELECT * FROM jtbd_categories WHERE user_id = ? ORDER BY created_at DESC'
-    ).bind(userId).all()
+    let query = 'SELECT * FROM jtbd_categories WHERE user_id = ?'
+    let params = [userId]
+    
+    if (versionId) {
+      query += ' AND version_id = ?'
+      params.push(versionId)
+    } else {
+      // If no version specified, get data with null version_id (legacy data)
+      query += ' AND version_id IS NULL'
+    }
+    
+    query += ' ORDER BY created_at DESC'
+    
+    const { results: categories } = await c.env.DB.prepare(query).bind(...params).all()
     
     // Get resources for each category
     const categoriesWithResources = await Promise.all(
@@ -646,7 +664,7 @@ app.get('/api/jtbd/:userId', async (c) => {
 })
 
 app.post('/api/jtbd', async (c) => {
-  const { userId, category, job, situation, outcome } = await c.req.json()
+  const { userId, category, job, situation, outcome, versionId } = await c.req.json()
   
   if (!userId || !category || !job || !situation || !outcome) {
     return c.json({ success: false, error: 'Missing required fields' }, 400)
@@ -655,10 +673,10 @@ app.post('/api/jtbd', async (c) => {
   try {
     const id = crypto.randomUUID()
     await c.env.DB.prepare(
-      'INSERT INTO jtbd_categories (id, user_id, category, job, situation, outcome) VALUES (?, ?, ?, ?, ?, ?)'
-    ).bind(id, userId, category, job, situation, outcome).run()
+      'INSERT INTO jtbd_categories (id, user_id, category, job, situation, outcome, version_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).bind(id, userId, category, job, situation, outcome, versionId || null).run()
     
-    return c.json({ success: true, data: { id, userId, category, job, situation, outcome, resources: [] } })
+    return c.json({ success: true, data: { id, userId, category, job, situation, outcome, resources: [], version_id: versionId } })
   } catch (error) {
     return c.json({ success: false, error: 'Failed to create JTBD category' }, 500)
   }
@@ -707,6 +725,270 @@ app.delete('/api/jtbd/resources/:id', async (c) => {
   }
 })
 
+// Version management API endpoints
+// Get all versions for a user
+app.get('/api/versions/:userId', async (c) => {
+  const userId = c.req.param('userId')
+  
+  // JWT Authentication
+  const authHeader = c.req.header('Authorization')
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return c.json({ error: 'No token provided' }, 401)
+  }
+  
+  try {
+    const { results } = await c.env.DB.prepare(
+      'SELECT * FROM template_versions WHERE user_id = ? ORDER BY is_default DESC, created_at DESC'
+    ).bind(userId).all()
+    
+    console.log('🔍 Loading versions for user:', userId)
+    console.log('🔍 Found versions:', results?.length || 0)
+    if (results && results.length > 0) {
+      console.log('🔍 Version details:', JSON.stringify(results, null, 2))
+    }
+    
+    return c.json({ success: true, data: results })
+  } catch (error) {
+    console.error('Failed to load versions:', error)
+    return c.json({ success: false, error: 'Failed to load versions' }, 500)
+  }
+})
+
+// Create a new version
+app.post('/api/versions', async (c) => {
+  // JWT Authentication
+  const authHeader = c.req.header('Authorization')
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return c.json({ error: 'No token provided' }, 401)
+  }
+  
+  const { userId, name, description, copyFromVersionId } = await c.req.json()
+  
+  console.log('🔍 Backend received version creation request:', {
+    userId,
+    name,
+    description,
+    copyFromVersionId
+  });
+  
+  if (!userId || !name) {
+    return c.json({ success: false, error: 'Missing required fields' }, 400)
+  }
+  
+  try {
+    const versionId = crypto.randomUUID()
+    const isDefault = false // New versions are not default by default
+    
+    await c.env.DB.prepare(
+      'INSERT INTO template_versions (id, user_id, name, description, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
+    ).bind(versionId, userId, name, description || null, isDefault).run()
+    
+    // Copy data from existing version if specified
+    if (copyFromVersionId) {
+      console.log('🔄 COPYING DATA: from version', copyFromVersionId, 'to new version', versionId)
+      console.log('🔄 copyFromVersionId type:', typeof copyFromVersionId, 'value:', copyFromVersionId)
+      
+      // Copy templates from the source version
+      const { results: sourceTemplates } = await c.env.DB.prepare(
+        'SELECT * FROM onboarding_templates WHERE user_id = ? AND version_id = ?'
+      ).bind(userId, copyFromVersionId).all()
+      
+      for (const template of sourceTemplates) {
+        const newTemplateId = crypto.randomUUID()
+        await c.env.DB.prepare(
+          'INSERT INTO onboarding_templates (id, user_id, period, title, priority, completed, version_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
+        ).bind(newTemplateId, userId, template.period, template.title, template.priority, template.completed, versionId).run()
+      }
+      
+      // Copy JTBD categories from the source version
+      const { results: sourceCategories } = await c.env.DB.prepare(
+        'SELECT * FROM jtbd_categories WHERE user_id = ? AND version_id = ?'
+      ).bind(userId, copyFromVersionId).all()
+      
+      for (const category of sourceCategories) {
+        const newCategoryId = crypto.randomUUID()
+        await c.env.DB.prepare(
+          'INSERT INTO jtbd_categories (id, user_id, category, job, situation, outcome, version_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
+        ).bind(newCategoryId, userId, category.category, category.job, category.situation, category.outcome, versionId).run()
+        
+        // Copy resources for this category
+        const { results: sourceResources } = await c.env.DB.prepare(
+          'SELECT * FROM resources WHERE category_id = ?'
+        ).bind(category.id).all()
+        
+        for (const resource of sourceResources) {
+          const newResourceId = crypto.randomUUID()
+          await c.env.DB.prepare(
+            'INSERT INTO resources (id, category_id, name, type, url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
+          ).bind(newResourceId, newCategoryId, resource.name, resource.type, resource.url).run()
+        }
+      }
+      
+      console.log('Successfully copied data from version', copyFromVersionId, 'to', versionId)
+    } else {
+      // If no copyFromVersionId, seed with default templates and resources
+      console.log('🌱🌱🌱 SEEDING BRANCH EXECUTED - Starting default seeding for version', versionId)
+      console.log('🌱 User ID:', userId, 'Version ID:', versionId)
+      
+      try {
+        console.log('🌱 About to call COMBINED seeding function...')
+        
+        // Skip all debug tests - go directly to proper seeding
+        console.log('🌱 Starting proper default seeding (no debug tests)...')
+        
+        // Use the SAME working functions as new account seeding!
+        console.log('🌱 Using the same seeding functions that work for new accounts...')
+        
+        // First seed templates using the working function
+        await seedDefaultTemplates(userId, c.env.DB, versionId)
+        console.log('✅ Templates seeded successfully')
+        
+        // Now seed resources using the SAME function that works for new accounts
+        console.log('🔍 About to call seedDefaultResources with userId:', userId, 'versionId:', versionId)
+        await seedDefaultResources(userId, c.env.DB, versionId)
+        console.log('✅ Resources seeded successfully')
+        
+        // Let's verify what was actually created
+        const createdCategories = await c.env.DB.prepare(
+          'SELECT id, category, version_id FROM jtbd_categories WHERE user_id = ? AND version_id = ?'
+        ).bind(userId, versionId).all()
+        console.log('🔍 Verification: Created categories for this version:', createdCategories.results?.length || 0)
+        if (createdCategories.results) {
+          createdCategories.results.forEach((cat: any) => {
+            console.log('🔍 Category:', cat.category, 'ID:', cat.id, 'Version:', cat.version_id)
+          })
+        }
+        
+        console.log('🎉🎉 SEEDING COMPLETED using working new account functions!')
+        
+        console.log('✅✅✅ ALL SEEDING COMPLETED for version', versionId)
+      } catch (seedError) {
+        console.error('❌❌❌ SEEDING ERROR:', seedError)
+        console.error('❌ Error details:', JSON.stringify(seedError, null, 2))
+      }
+    }
+    
+    // Return the created version
+    const newVersion = await c.env.DB.prepare(
+      'SELECT * FROM template_versions WHERE id = ?'
+    ).bind(versionId).first()
+    
+    return c.json({ success: true, data: newVersion })
+  } catch (error) {
+    console.error('Failed to create version:', error)
+    return c.json({ success: false, error: 'Failed to create version' }, 500)
+  }
+})
+
+// Update a version
+app.put('/api/versions/:versionId', async (c) => {
+  const versionId = c.req.param('versionId')
+  
+  // JWT Authentication
+  const authHeader = c.req.header('Authorization')
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return c.json({ error: 'No token provided' }, 401)
+  }
+  
+  const { name, description } = await c.req.json()
+  
+  if (!name) {
+    return c.json({ success: false, error: 'Name is required' }, 400)
+  }
+  
+  try {
+    await c.env.DB.prepare(
+      'UPDATE template_versions SET name = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+    ).bind(name, description || null, versionId).run()
+    
+    // Return the updated version
+    const updatedVersion = await c.env.DB.prepare(
+      'SELECT * FROM template_versions WHERE id = ?'
+    ).bind(versionId).first()
+    
+    return c.json({ success: true, data: updatedVersion })
+  } catch (error) {
+    console.error('Failed to update version:', error)
+    return c.json({ success: false, error: 'Failed to update version' }, 500)
+  }
+})
+
+// Delete a version
+app.delete('/api/versions/:versionId', async (c) => {
+  const versionId = c.req.param('versionId')
+  
+  // JWT Authentication
+  const authHeader = c.req.header('Authorization')
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return c.json({ error: 'No token provided' }, 401)
+  }
+  
+  try {
+    // Check if this is the default version
+    const version = await c.env.DB.prepare(
+      'SELECT * FROM template_versions WHERE id = ?'
+    ).bind(versionId).first()
+    
+    if (!version) {
+      return c.json({ success: false, error: 'Version not found' }, 404)
+    }
+    
+    if (version.is_default) {
+      return c.json({ success: false, error: 'Cannot delete the default version' }, 400)
+    }
+    
+    // Delete the version (this will cascade delete related data due to foreign key constraints)
+    await c.env.DB.prepare('DELETE FROM template_versions WHERE id = ?').bind(versionId).run()
+    
+    return c.json({ success: true })
+  } catch (error) {
+    console.error('Failed to delete version:', error)
+    return c.json({ success: false, error: 'Failed to delete version' }, 500)
+  }
+})
+
+// Set a version as default
+app.post('/api/versions/:versionId/set-default', async (c) => {
+  const versionId = c.req.param('versionId')
+  
+  // JWT Authentication
+  const authHeader = c.req.header('Authorization')
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return c.json({ error: 'No token provided' }, 401)
+  }
+  
+  try {
+    // Get the version to find the user_id
+    const version = await c.env.DB.prepare(
+      'SELECT * FROM template_versions WHERE id = ?'
+    ).bind(versionId).first()
+    
+    if (!version) {
+      return c.json({ success: false, error: 'Version not found' }, 404)
+    }
+    
+    // First, unset all other versions as default for this user
+    await c.env.DB.prepare(
+      'UPDATE template_versions SET is_default = 0, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?'
+    ).bind(version.user_id).run()
+    
+    // Then set this version as default
+    await c.env.DB.prepare(
+      'UPDATE template_versions SET is_default = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+    ).bind(versionId).run()
+    
+    // Return the updated version
+    const updatedVersion = await c.env.DB.prepare(
+      'SELECT * FROM template_versions WHERE id = ?'
+    ).bind(versionId).first()
+    
+    return c.json({ success: true, data: updatedVersion })
+  } catch (error) {
+    console.error('Failed to set default version:', error)
+    return c.json({ success: false, error: 'Failed to set default version' }, 500)
+  }
+})
+
 // User management
 app.post('/api/users', async (c) => {
   const { id, email, name, profileImageUrl } = await c.req.json()
@@ -728,16 +1010,36 @@ app.post('/api/users', async (c) => {
 
 // Authentication endpoints
 app.get('/api/auth/google', async (c) => {
-  const redirectUri = `${new URL(c.req.url).origin}/api/auth/google/callback`
-  const googleAuthUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth')
+  console.log('🔐 [OAuth] Starting Google OAuth flow')
   
-  googleAuthUrl.searchParams.set('client_id', c.env.GOOGLE_CLIENT_ID)
-  googleAuthUrl.searchParams.set('redirect_uri', redirectUri)
-  googleAuthUrl.searchParams.set('response_type', 'code')
-  googleAuthUrl.searchParams.set('scope', 'openid email profile')
-  googleAuthUrl.searchParams.set('access_type', 'offline')
-  
-  return c.redirect(googleAuthUrl.toString())
+  try {
+    const origin = new URL(c.req.url).origin
+    const redirectUri = `${origin}/api/auth/google/callback`
+    console.log('🔗 [OAuth] Origin:', origin)
+    console.log('🔗 [OAuth] Redirect URI:', redirectUri)
+    
+    // Verify environment variables are present
+    if (!c.env.GOOGLE_CLIENT_ID) {
+      console.error('❌ [OAuth] GOOGLE_CLIENT_ID is not configured')
+      return c.redirect('/?error=oauth_config_missing')
+    }
+    
+    const googleAuthUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth')
+    
+    googleAuthUrl.searchParams.set('client_id', c.env.GOOGLE_CLIENT_ID)
+    googleAuthUrl.searchParams.set('redirect_uri', redirectUri)
+    googleAuthUrl.searchParams.set('response_type', 'code')
+    googleAuthUrl.searchParams.set('scope', 'openid email profile')
+    googleAuthUrl.searchParams.set('access_type', 'offline')
+    
+    console.log('✅ [OAuth] Redirecting to Google OAuth URL')
+    console.log('🔗 [OAuth] Google URL:', googleAuthUrl.toString())
+    
+    return c.redirect(googleAuthUrl.toString())
+  } catch (error) {
+    console.error('❌ [OAuth] Error in Google OAuth initiation:', error)
+    return c.redirect('/?error=oauth_init_failed')
+  }
 })
 
 // Config endpoint to provide Google Client ID to frontend
@@ -748,15 +1050,40 @@ app.get('/api/auth/config', async (c) => {
 })
 
 app.get('/api/auth/google/callback', async (c) => {
+  console.log('🔄 [OAuth] Processing Google OAuth callback')
+  
   const code = c.req.query('code')
   const error = c.req.query('error')
+  const state = c.req.query('state')
   
-  if (error || !code) {
-    return c.redirect('/?error=auth_failed')
+  console.log('📥 [OAuth] Callback parameters:', { 
+    hasCode: !!code, 
+    error: error || 'none', 
+    state: state || 'none' 
+  })
+  
+  if (error) {
+    console.error('❌ [OAuth] Google returned error:', error)
+    return c.redirect(`/?error=auth_failed&details=${encodeURIComponent(error)}`)
+  }
+  
+  if (!code) {
+    console.error('❌ [OAuth] No authorization code received')
+    return c.redirect('/?error=auth_failed&details=no_code')
   }
   
   try {
-    const redirectUri = `${new URL(c.req.url).origin}/api/auth/google/callback`
+    const origin = new URL(c.req.url).origin
+    const redirectUri = `${origin}/api/auth/google/callback`
+    console.log('🔗 [OAuth] Token exchange redirect URI:', redirectUri)
+    
+    // Verify environment variables
+    if (!c.env.GOOGLE_CLIENT_ID || !c.env.GOOGLE_CLIENT_SECRET) {
+      console.error('❌ [OAuth] Missing Google OAuth credentials')
+      return c.redirect('/?error=oauth_config_missing')
+    }
+    
+    console.log('🔄 [OAuth] Exchanging code for tokens...')
     
     // Exchange code for tokens
     const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
@@ -773,66 +1100,140 @@ app.get('/api/auth/google/callback', async (c) => {
       }),
     })
     
+    console.log('📊 [OAuth] Token response status:', tokenResponse.status)
+    
+    if (!tokenResponse.ok) {
+      const errorText = await tokenResponse.text()
+      console.error('❌ [OAuth] Token exchange failed:', {
+        status: tokenResponse.status,
+        statusText: tokenResponse.statusText,
+        error: errorText
+      })
+      return c.redirect(`/?error=token_failed&status=${tokenResponse.status}`)
+    }
+    
     const tokens = await tokenResponse.json() as any
+    console.log('🎟️ [OAuth] Token exchange successful, access_token present:', !!tokens.access_token)
     
     if (!tokens.access_token) {
-      return c.redirect('/?error=token_failed')
+      console.error('❌ [OAuth] No access token in response:', tokens)
+      return c.redirect('/?error=token_failed&details=no_access_token')
     }
     
     // Get user info from Google
+    console.log('👤 [OAuth] Fetching user info from Google...')
     const userResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
       headers: {
         Authorization: `Bearer ${tokens.access_token}`,
       },
     })
     
+    console.log('📊 [OAuth] User info response status:', userResponse.status)
+    
+    if (!userResponse.ok) {
+      const errorText = await userResponse.text()
+      console.error('❌ [OAuth] Failed to fetch user info:', {
+        status: userResponse.status,
+        statusText: userResponse.statusText,
+        error: errorText
+      })
+      return c.redirect(`/?error=userinfo_failed&status=${userResponse.status}`)
+    }
+    
     const userInfo = await userResponse.json() as any
+    console.log('✅ [OAuth] User info retrieved:', {
+      id: userInfo.id,
+      email: userInfo.email,
+      name: userInfo.name,
+      hasPicture: !!userInfo.picture
+    })
     
     // Check if user exists, if not create new user
+    console.log('🔍 [OAuth] Checking if user exists in database...')
     let user = await c.env.DB.prepare(
       'SELECT * FROM users WHERE id = ? OR email = ?'
     ).bind(userInfo.id, userInfo.email).first()
     
     if (user) {
-      // Update existing user
-      await c.env.DB.prepare(
-        'UPDATE users SET name = ?, profile_image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-      ).bind(userInfo.name, userInfo.picture, user.id).run()
+      console.log('🔄 [OAuth] Updating existing user:', user.id)
+      try {
+        await c.env.DB.prepare(
+          'UPDATE users SET name = ?, profile_image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+        ).bind(userInfo.name, userInfo.picture, user.id).run()
+        console.log('✅ [OAuth] User updated successfully')
+      } catch (dbError) {
+        console.error('❌ [OAuth] Failed to update user:', dbError)
+        return c.redirect('/?error=db_update_failed')
+      }
     } else {
-      // Create new user
-      await c.env.DB.prepare(
-        'INSERT INTO users (id, email, name, profile_image_url) VALUES (?, ?, ?, ?)'
-      ).bind(userInfo.id, userInfo.email, userInfo.name, userInfo.picture).run()
-      user = { id: userInfo.id, email: userInfo.email, name: userInfo.name, profile_image_url: userInfo.picture }
-      
-      // Seed default templates and JTBD resources for new user
-      await seedDefaultTemplates(userInfo.id, c.env.DB)
-      await seedDefaultResources(userInfo.id, c.env.DB)
+      console.log('🆕 [OAuth] Creating new user:', userInfo.id)
+      try {
+        await c.env.DB.prepare(
+          'INSERT INTO users (id, email, name, profile_image_url) VALUES (?, ?, ?, ?)'
+        ).bind(userInfo.id, userInfo.email, userInfo.name, userInfo.picture).run()
+        console.log('✅ [OAuth] New user created successfully')
+        user = { id: userInfo.id, email: userInfo.email, name: userInfo.name, profile_image_url: userInfo.picture }
+        
+        // Create default version for new user first
+        const defaultVersionId = crypto.randomUUID()
+        console.log('🌱 [OAuth] Creating default version for new user:', userInfo.id, 'with version ID:', defaultVersionId)
+        
+        await c.env.DB.prepare(
+          'INSERT INTO template_versions (id, user_id, name, description, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        ).bind(
+          defaultVersionId,
+          userInfo.id,
+          'My Default Version',
+          'Your default onboarding content',
+          1, // is_default = true
+          new Date().toISOString(),
+          new Date().toISOString()
+        ).run()
+        
+        console.log('✅ [OAuth] Default version created successfully')
+        
+        // Now seed default templates and JTBD resources into the default version
+        console.log('🌱 [OAuth] Seeding default content into default version...')
+        await seedDefaultTemplates(userInfo.id, c.env.DB, defaultVersionId)
+        await seedDefaultResources(userInfo.id, c.env.DB, defaultVersionId)
+        console.log('✅ [OAuth] Default content seeded into default version')
+      } catch (dbError) {
+        console.error('❌ [OAuth] Failed to create new user or seed content:', dbError)
+        return c.redirect('/?error=db_create_failed')
+      }
     }
     
-    // Create JWT token using unified createJWT helper
-    const jwtToken = createJWT(
-      {
+    // Create JWT token using unified createJWT helper (include profile picture)
+    console.log('🎟️ [OAuth] Creating JWT token...')
+    try {
+      const jwtToken = createJWT(
+        {
+          id: userInfo.id,
+          email: userInfo.email,
+          name: userInfo.name,
+          picture: userInfo.picture
+        },
+        c.env.JWT_SECRET
+      )
+      
+      // Prepare user data for URL
+      const userData = {
         id: userInfo.id,
         email: userInfo.email,
-        name: userInfo.name
-      },
-      c.env.JWT_SECRET
-    )
-    
-    // Prepare user data for URL
-    const userData = {
-      id: userInfo.id,
-      email: userInfo.email,
-      name: userInfo.name,
-      picture: userInfo.picture
+        name: userInfo.name,
+        picture: userInfo.picture
+      }
+      
+      console.log('✅ [OAuth] JWT token created successfully, redirecting to app...')
+      // Redirect back to app with token and user data (matching find-strengths-auth pattern)
+      return c.redirect(`/?token=${jwtToken}&user=${encodeURIComponent(JSON.stringify(userData))}`)
+    } catch (jwtError) {
+      console.error('❌ [OAuth] Failed to create JWT token:', jwtError)
+      return c.redirect('/?error=jwt_creation_failed')
     }
     
-    // Redirect back to app with token and user data (matching find-strengths-auth pattern)
-    return c.redirect(`/?token=${jwtToken}&user=${encodeURIComponent(JSON.stringify(userData))}`)
-    
   } catch (error) {
-    console.error('OAuth callback error:', error)
+    console.error('❌ [OAuth] Unexpected error in OAuth callback:', error)
     return c.redirect('/?error=auth_error')
   }
 })
@@ -923,8 +1324,140 @@ const verifyJWT = (token: string, secret: string) => {
   return tokenData
 }
 
+// Combined function to seed both templates and resources together
+const seedDefaultData = async (userId: string, db: D1Database, versionId?: string) => {
+  console.log('🌱🌱 Starting COMBINED seeding for user', userId, 'version', versionId)
+  
+  // TEMPLATES SEEDING (we know this works)
+  const defaultTemplates = [
+    // First Day
+    { period: 'firstDay', title: 'Complete IT setup and access accounts', priority: 'high' },
+    { period: 'firstDay', title: 'Meet your direct manager and team', priority: 'high' },
+    { period: 'firstDay', title: 'Review job description and expectations', priority: 'high' },
+    { period: 'firstDay', title: 'Complete required HR paperwork', priority: 'medium' },
+    { period: 'firstDay', title: 'Take office tour and locate key areas', priority: 'medium' },
+    
+    // First Week
+    { period: 'firstWeek', title: 'Schedule 1:1s with key stakeholders', priority: 'high' },
+    { period: 'firstWeek', title: 'Review company handbook and policies', priority: 'medium' },
+    { period: 'firstWeek', title: 'Set up development environment', priority: 'high' },
+    { period: 'firstWeek', title: 'Join relevant team channels and meetings', priority: 'medium' },
+    { period: 'firstWeek', title: 'Complete security and compliance training', priority: 'high' },
+    
+    // Second Week
+    { period: 'secondWeek', title: 'Shadow team members on key processes', priority: 'high' },
+    { period: 'secondWeek', title: 'Review current projects and roadmap', priority: 'medium' },
+    { period: 'secondWeek', title: 'Set up 1:1s with cross-functional partners', priority: 'medium' },
+    { period: 'secondWeek', title: 'Complete product and domain training', priority: 'high' },
+    
+    // Third Week
+    { period: 'thirdWeek', title: 'Take on first small project or task', priority: 'high' },
+    { period: 'thirdWeek', title: 'Provide feedback on onboarding process', priority: 'low' },
+    
+    // First Month
+    { period: 'firstMonth', title: 'Complete 30-day check-in with manager', priority: 'high' },
+    { period: 'firstMonth', title: 'Set goals for next 60 days', priority: 'medium' }
+  ]
+
+  // RESOURCES SEEDING (the problematic part) - Use unique UUIDs to avoid constraint violations
+  const defaultCategories = [
+    {
+      id: crypto.randomUUID(),
+      category: 'Design Tools & Systems',
+      job: 'create consistent designs',
+      situation: 'access to design systems and tools',
+      outcome: 'work efficiently and maintain brand consistency',
+      resources: [
+        { name: 'Figma Component Library', type: 'tool', url: '#' },
+        { name: 'Design System Documentation', type: 'article', url: '#' },
+        { name: 'Brand Guidelines', type: 'guide', url: '#' }
+      ]
+    },
+    {
+      id: crypto.randomUUID(),
+      category: 'Process & Workflow',
+      job: 'understand our design process',
+      situation: 'clear workflow documentation',
+      outcome: 'collaborate effectively with my team',
+      resources: [
+        { name: 'Design Process Playbook', type: 'guide', url: '#' },
+        { name: 'Critique Guidelines', type: 'guide', url: '#' },
+        { name: 'Handoff Checklist', type: 'tool', url: '#' }
+      ]
+    },
+    {
+      id: crypto.randomUUID(),
+      category: 'Research & Strategy',
+      job: 'make informed design decisions',
+      situation: 'access to user research and data',
+      outcome: 'create user-centered designs',
+      resources: [
+        { name: 'User Research Repository', type: 'database', url: '#' },
+        { name: 'Analytics Dashboard', type: 'tool', url: '#' },
+        { name: 'Design Principles Guide', type: 'guide', url: '#' }
+      ]
+    }
+  ]
+
+  try {
+    console.log('🌱 Step 1: Seeding', defaultTemplates.length, 'templates...')
+    
+    // Insert default templates
+    for (const template of defaultTemplates) {
+      const templateId = crypto.randomUUID()
+      await db.prepare(
+        'INSERT INTO onboarding_templates (id, user_id, period, title, priority, completed, version_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
+      ).bind(
+        templateId,
+        userId,
+        template.period,
+        template.title,
+        template.priority,
+        false,
+        versionId || null
+      ).run()
+    }
+    
+    console.log('✅ Templates seeded successfully!')
+    console.log('🌱 Step 2: Seeding', defaultCategories.length, 'JTBD categories and resources...')
+    
+    // Insert JTBD categories and resources
+    for (const category of defaultCategories) {
+      console.log('🌱 Creating category:', category.category)
+      
+      await db.prepare(
+        'INSERT INTO jtbd_categories (id, user_id, category, job, situation, outcome, version_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
+      ).bind(category.id, userId, category.category, category.job, category.situation, category.outcome, versionId || null).run()
+      
+      console.log('✅ Category created:', category.category)
+      
+      // Insert resources for each category
+      for (let i = 0; i < category.resources.length; i++) {
+        const resource = category.resources[i]
+        const resourceId = `res_${userId}_${category.id}_${i + 1}`
+        
+        console.log('🌱 Creating resource:', resource.name, 'for category:', category.category)
+        
+        await db.prepare(
+          'INSERT INTO resources (id, category_id, name, type, url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
+        ).bind(resourceId, category.id, resource.name, resource.type, resource.url).run()
+        
+        console.log('✅ Resource created:', resource.name)
+      }
+    }
+    
+    console.log('🎉🎉 COMBINED SEEDING COMPLETED SUCCESSFULLY!')
+    console.log(`✅ Seeded ${defaultTemplates.length} templates and ${defaultCategories.length} JTBD categories with resources`)
+    
+  } catch (error) {
+    console.error('❌❌ COMBINED SEEDING ERROR:', error)
+    console.error('❌ Error details:', JSON.stringify(error, null, 2))
+    throw error
+  }
+}
+
 // Helper function to seed default JTBD resources for new users
-const seedDefaultTemplates = async (userId: string, db: D1Database) => {
+const seedDefaultTemplates = async (userId: string, db: D1Database, versionId?: string) => {
   const defaultTemplates = [
     // First Day
     { period: 'firstDay', title: 'Complete IT setup and access accounts', priority: 'high' },
@@ -959,14 +1492,15 @@ const seedDefaultTemplates = async (userId: string, db: D1Database) => {
     for (const template of defaultTemplates) {
       const templateId = crypto.randomUUID()
       await db.prepare(
-        'INSERT INTO onboarding_templates (id, user_id, period, title, priority, completed) VALUES (?, ?, ?, ?, ?, ?)'
+        'INSERT INTO onboarding_templates (id, user_id, period, title, priority, completed, version_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
       ).bind(
         templateId,
         userId,
         template.period,
         template.title,
         template.priority,
-        false
+        false,
+        versionId || null
       ).run()
     }
     
@@ -977,10 +1511,10 @@ const seedDefaultTemplates = async (userId: string, db: D1Database) => {
   }
 }
 
-const seedDefaultResources = async (userId: string, db: D1Database) => {
+const seedDefaultResources = async (userId: string, db: D1Database, versionId?: string) => {
   const defaultCategories = [
     {
-      id: `jtbd_${userId}_1`,
+      id: crypto.randomUUID(),
       category: 'Design Tools & Systems',
       job: 'create consistent designs',
       situation: 'access to design systems and tools',
@@ -992,7 +1526,7 @@ const seedDefaultResources = async (userId: string, db: D1Database) => {
       ]
     },
     {
-      id: `jtbd_${userId}_2`,
+      id: crypto.randomUUID(),
       category: 'Process & Workflow',
       job: 'understand our design process',
       situation: 'clear workflow documentation',
@@ -1004,7 +1538,7 @@ const seedDefaultResources = async (userId: string, db: D1Database) => {
       ]
     },
     {
-      id: `jtbd_${userId}_3`,
+      id: crypto.randomUUID(),
       category: 'Research & Strategy',
       job: 'make informed design decisions',
       situation: 'access to user research and strategy docs',
@@ -1018,23 +1552,38 @@ const seedDefaultResources = async (userId: string, db: D1Database) => {
   ]
 
   try {
+    console.log('🔍 Starting to seed', defaultCategories.length, 'JTBD categories for user', userId, 'version', versionId)
+    
     // Insert JTBD categories
     for (const category of defaultCategories) {
+      console.log('🔍 Inserting JTBD category:', category.category, 'with ID:', category.id)
+      
       await db.prepare(
-        'INSERT INTO jtbd_categories (id, user_id, category, job, situation, outcome) VALUES (?, ?, ?, ?, ?, ?)'
-      ).bind(category.id, userId, category.category, category.job, category.situation, category.outcome).run()
+        'INSERT INTO jtbd_categories (id, user_id, category, job, situation, outcome, version_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
+      ).bind(category.id, userId, category.category, category.job, category.situation, category.outcome, versionId || null).run()
+      
+      console.log('✅ Successfully inserted JTBD category:', category.category)
       
       // Insert resources for each category
+      console.log('🔍 Inserting', category.resources.length, 'resources for category:', category.category)
+      
       for (let i = 0; i < category.resources.length; i++) {
         const resource = category.resources[i]
         const resourceId = `res_${userId}_${category.id}_${i + 1}`
+        
+        console.log('🔍 Inserting resource:', resource.name, 'with ID:', resourceId, 'for category ID:', category.id)
+        
         await db.prepare(
-          'INSERT INTO resources (id, category_id, name, type, url) VALUES (?, ?, ?, ?, ?)'
+          'INSERT INTO resources (id, category_id, name, type, url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
         ).bind(resourceId, category.id, resource.name, resource.type, resource.url).run()
+        
+        console.log('✅ Successfully inserted resource:', resource.name)
       }
     }
+    console.log(`✅ Successfully seeded ${defaultCategories.length} JTBD categories and resources for user ${userId} in version ${versionId}`)
   } catch (error) {
-    console.error('Error seeding default resources:', error)
+    console.error('❌ Error seeding default resources:', error)
+    console.error('❌ Full error details:', JSON.stringify(error, null, 2))
     // Don't throw error - user creation should still succeed even if seeding fails
   }
 }
@@ -1066,9 +1615,29 @@ app.post('/api/auth/register', async (c) => {
       'INSERT INTO users (id, email, name, password_hash) VALUES (?, ?, ?, ?)'
     ).bind(userId, email, name, passwordHash).run()
     
-    // Seed default templates and JTBD resources for new user
-    await seedDefaultTemplates(userId, c.env.DB)
-    await seedDefaultResources(userId, c.env.DB)
+    // Create default version for new user first
+    const defaultVersionId = crypto.randomUUID()
+    console.log('🌱 Creating default version for new email user:', userId, 'with version ID:', defaultVersionId)
+    
+    await c.env.DB.prepare(
+      'INSERT INTO template_versions (id, user_id, name, description, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).bind(
+      defaultVersionId,
+      userId,
+      'My Default Version',
+      'Your default onboarding content',
+      1, // is_default = true
+      new Date().toISOString(),
+      new Date().toISOString()
+    ).run()
+    
+    console.log('✅ Default version created successfully for email user')
+    
+    // Now seed default templates and JTBD resources into the default version
+    console.log('🌱 Seeding default content into default version for email user...')
+    await seedDefaultTemplates(userId, c.env.DB, defaultVersionId)
+    await seedDefaultResources(userId, c.env.DB, defaultVersionId)
+    console.log('✅ Default content seeded into default version for email user')
     
     // Generate JWT token
     const token = createJWT(
@@ -1114,9 +1683,39 @@ app.post('/api/auth/login', async (c) => {
       return c.json({ error: 'Invalid email or password' }, 401)
     }
     
-    // Generate JWT token
+    // Check if user has any versions, if not create default version (for existing users)
+    const existingVersions = await c.env.DB.prepare(
+      'SELECT COUNT(*) as count FROM template_versions WHERE user_id = ?'
+    ).bind(user.id).first() as any
+    
+    if (existingVersions.count === 0) {
+      console.log('🌱 [Email Login] Creating default version for existing user:', user.id)
+      
+      const defaultVersionId = crypto.randomUUID()
+      await c.env.DB.prepare(
+        'INSERT INTO template_versions (id, user_id, name, description, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      ).bind(
+        defaultVersionId,
+        user.id,
+        'My Default Version',
+        'Your default onboarding content',
+        1, // is_default = true
+        new Date().toISOString(),
+        new Date().toISOString()
+      ).run()
+      
+      console.log('✅ [Email Login] Default version created successfully')
+      
+      // Seed default templates and JTBD resources into the default version
+      console.log('🌱 [Email Login] Seeding default content into default version...')
+      await seedDefaultTemplates(user.id, c.env.DB, defaultVersionId)
+      await seedDefaultResources(user.id, c.env.DB, defaultVersionId)
+      console.log('✅ [Email Login] Default content seeded into default version')
+    }
+    
+    // Generate JWT token (include profile picture)
     const token = createJWT(
-      { id: user.id, email: user.email, name: user.name },
+      { id: user.id, email: user.email, name: user.name, picture: user.profile_image_url },
       c.env.JWT_SECRET
     )
     
