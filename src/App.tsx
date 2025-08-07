@@ -1999,16 +1999,24 @@ function App() {
                 // Redirect to home page and reload data
                 window.history.replaceState({}, document.title, '/');
                 
-                console.log('Reloading templates and resources...');
-                // Reload both templates and resources to show all cloned content
-                await Promise.all([
-                    loadOnboardingTemplates(currentVersion?.id),
-                    loadJTBDResources(currentVersion?.id)
-                ]);
+                console.log('🔄 [Clone] Reloading versions list to show new cloned version...');
+                console.log('🔄 [Clone] Current versions before reload:', versions.length, 'versions');
                 
-                console.log('Data reloaded, switching to templates tab');
+                // First reload versions to get the newly created clone version
+                await loadVersions();
+                
+                console.log('🔄 [Clone] Versions reloaded, checking updated state...');
+                // Add a small delay to ensure state updates are processed
+                setTimeout(() => {
+                    console.log('🔄 [Clone] Versions after reload:', versions.length, 'versions');
+                    console.log('🔄 [Clone] Version names:', versions.map(v => v.name));
+                }, 100);
+                
+                console.log('🔄 [Clone] Switching to templates tab');
                 // Switch to templates tab to show cloned templates
                 setActiveTab('templates');
+                
+                console.log('✅ [Clone] Clone process completed successfully');
             } else if (result.requiresConfirmation) {
                 console.log('Clone requires confirmation for existing user');
                 setCloneConfirmationData(result);
@@ -2067,13 +2075,23 @@ function App() {
                 // Redirect to home page and reload data
                 window.history.replaceState({}, document.title, '/');
                 
-                // Reload both templates and resources to show all content
-                await Promise.all([
-                    loadOnboardingTemplates(currentVersion?.id),
-                    loadJTBDResources(currentVersion?.id)
-                ]);
+                console.log('🔄 [Clone Confirm] Reloading versions list to show new cloned version...');
+                console.log('🔄 [Clone Confirm] Current versions before reload:', versions.length, 'versions');
                 
+                // Reload versions to get the newly created clone version
+                await loadVersions();
+                
+                console.log('🔄 [Clone Confirm] Versions reloaded, checking updated state...');
+                // Add a small delay to ensure state updates are processed
+                setTimeout(() => {
+                    console.log('🔄 [Clone Confirm] Versions after reload:', versions.length, 'versions');
+                    console.log('🔄 [Clone Confirm] Version names:', versions.map(v => v.name));
+                }, 100);
+                
+                console.log('🔄 [Clone Confirm] Switching to templates tab');
                 setActiveTab('templates');
+                
+                console.log('✅ [Clone Confirm] Confirmed clone process completed successfully');
             } else {
                 console.error('Confirmed clone failed:', result.error);
                 alert('Failed to clone template: ' + result.error);
