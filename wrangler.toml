@@ -11,13 +11,24 @@ ENVIRONMENT = "development"
 # and as environment variables in Cloudflare Workers for production
 
 
+# Production database (commented out for versioning development)
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "onboarding-builder"
+# database_id = "83620845-c9d9-4eec-bdc7-97f687f742fc"
+
+# Development database for versioning features
 [[d1_databases]]
 binding = "DB"
-database_name = "onboarding-builder"
-database_id = "83620845-c9d9-4eec-bdc7-97f687f742fc"
+database_name = "onboarding-builder-versions-dev"
+database_id = "96dcdb6b-ecbc-464d-92e7-45634918f631"
 
 [build]
 command = "npm run build"
+
+# Development server configuration
+[dev]
+port = 8787
 
 # Assets configuration for static files
 [assets]

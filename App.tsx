@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import './App.css';
@@ -398,9 +398,6 @@ function AccountModal({ user, onClose, onDeleteAccount }: AccountModalProps) {
                     </button>
                 </div>
             </div>
-        </div>
-    )
-}
 
 function App() {
     // --- State Management ---
@@ -412,6 +409,14 @@ function App() {
     const [selectedPeriod, setSelectedPeriod] = useState<string>('firstDay');
     const [isDataLoading, setIsDataLoading] = useState(false);
     const [showProfileMenu, setShowProfileMenu] = useState(false);
+
+    // Version management state
+    const [versions, setVersions] = useState<Version[]>([]);
+    const [currentVersion, setCurrentVersion] = useState<Version | null>(null);
+    const [showVersionModal, setShowVersionModal] = useState(false);
+    const [versionModalMode, setVersionModalMode] = useState<'create' | 'manage'>('create');
+    const [versionFormData, setVersionFormData] = useState({ name: '', description: '', copyFromVersion: '' });
+    const [isCreatingVersion, setIsCreatingVersion] = useState(false);
 
     // Onboarding template state
     const [onboardingTemplate, setOnboardingTemplate] = useState<Record<string, OnboardingItem[]>>(defaultOnboardingTemplate);
@@ -972,6 +977,9 @@ function App() {
                 setUser(data.user)
                 setShowAuthModal(false)
                 
+                // Ensure profile menu is closed by default (consistent with Google auth)
+                setShowProfileMenu(false)
+                
                 // Execute pending guest action if any
                 if (pendingGuestAction) {
                     pendingGuestAction()
@@ -1109,10 +1117,25 @@ function App() {
                                 className="flex items-center gap-2 p-2 rounded-lg hover:bg-gray-100 transition-colors"
                             >
                                 {user.picture ? (
-                                    <img src={user.picture} alt="Profile" className="w-8 h-8 rounded-full object-cover" />
-                                ) : (
-                                    <div className="w-8 h-8 rounded-full bg-primary-500 text-white flex items-center justify-center font-semibold">{user.name.charAt(0)}</div>
-                                )}
+                                    <img 
+                                        src={user.picture} 
+                                        alt="Profile" 
+                                        className="w-8 h-8 rounded-full object-cover" 
+                                        onError={(e) => {
+                                            console.warn('Profile image failed to load:', user.picture)
+                                            // Hide the broken image and show fallback
+                                            e.currentTarget.style.display = 'none'
+                                            const fallback = e.currentTarget.nextElementSibling as HTMLElement
+                                            if (fallback) fallback.style.display = 'flex'
+                                        }}
+                                    />
+                                ) : null}
+                                <div 
+                                    className="w-8 h-8 rounded-full bg-primary-500 text-white flex items-center justify-center font-semibold" 
+                                    style={{ display: user.picture ? 'none' : 'flex' }}
+                                >
+                                    {user.name.charAt(0)}
+                                </div>
                                 <span className="text-gray-700 font-medium">{user.name}</span>
                             </button>
                             {showProfileMenu && (
