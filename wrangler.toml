@@ -1,4 +1,4 @@
-name = "onboarding-builder"
+name = "onboarding-builder2"
 main = "index.ts"
 compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
@@ -11,13 +11,13 @@ ENVIRONMENT = "development"
 # and as environment variables in Cloudflare Workers for production
 
 
-# Production database (commented out for versioning development)
+# Production database (old schema - commented out)
 # [[d1_databases]]
 # binding = "DB"
 # database_name = "onboarding-builder"
 # database_id = "83620845-c9d9-4eec-bdc7-97f687f742fc"
 
-# Development database for versioning features
+# Development database for versioning features (correct schema)
 [[d1_databases]]
 binding = "DB"
 database_name = "onboarding-builder-versions-dev"

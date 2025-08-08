@@ -858,9 +858,25 @@ function App() {
     const [inviteToken, setInviteToken] = useState<string | null>(null);
     const [sharedTemplateData, setSharedTemplateData] = useState<any>(null);
     const [showCloneModal, setShowCloneModal] = useState(false);
+    
+    // Success notification state
+    const [successNotification, setSuccessNotification] = useState<{
+        show: boolean;
+        title: string;
+        message: string;
+        versionName?: string;
+    }>({ show: false, title: '', message: '', versionName: '' });
+    
+    // Copy link notification state
+    const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
     const [isLoadingSharedTemplate, setIsLoadingSharedTemplate] = useState(false);
     const [shouldAutoCloneAfterAuth, setShouldAutoCloneAfterAuth] = useState(false);
     const [isCloningTemplate, setIsCloningTemplate] = useState(false);
+    // Unified clone confirmation state
+    const [showUnifiedCloneConfirmation, setShowUnifiedCloneConfirmation] = useState(false);
+    const [unifiedCloneData, setUnifiedCloneData] = useState<any>(null);
+    
+    // Legacy states (keeping for backward compatibility during transition)
     const [showCloneConfirmation, setShowCloneConfirmation] = useState(false);
     const [cloneConfirmationData, setCloneConfirmationData] = useState<any>(null);
     const [showDuplicateCloneConfirmation, setShowDuplicateCloneConfirmation] = useState(false);
@@ -1043,6 +1059,16 @@ function App() {
             const result = await response.json();
             if (result.success) {
                 await loadVersions(); // Reload versions
+                
+                // Update currentVersion state if we're editing the current version
+                // This ensures the description field in main display updates immediately
+                if (currentVersion?.id === versionId) {
+                    setCurrentVersion({
+                        ...currentVersion,
+                        name: name,
+                        description: description || ''
+                    });
+                }
             }
             return result;
         } catch (error) {
@@ -1873,7 +1899,9 @@ function App() {
         if (linkToCopy) {
             try {
                 await navigator.clipboard.writeText(linkToCopy);
-                alert('Invite link copied to clipboard!');
+                // Show temporary "Copied!" indicator
+                setCopiedLinkId(linkToCopy);
+                setTimeout(() => setCopiedLinkId(null), 2000);
             } catch (error) {
                 console.error('Failed to copy link:', error);
                 // Fallback for older browsers
@@ -1883,7 +1911,9 @@ function App() {
                 textArea.select();
                 document.execCommand('copy');
                 document.body.removeChild(textArea);
-                alert('Invite link copied to clipboard!');
+                // Show temporary "Copied!" indicator
+                setCopiedLinkId(linkToCopy);
+                setTimeout(() => setCopiedLinkId(null), 2000);
             }
         } else {
             alert('No link available to copy');
@@ -2185,8 +2215,13 @@ function App() {
             if (result.success) {
                 console.log('Template cloned successfully, reloading data...');
                 
-                // Show success message with better UX
-                alert(`Template cloned successfully! ${result.message || 'You now have access to the shared templates and resources.'}`);
+                // Show success notification with better UX
+                setSuccessNotification({
+                    show: true,
+                    title: 'Template Cloned Successfully!',
+                    message: 'A new version has been created and added to your list. You can find it in your version dropdown, edit it to make it your own, and share it with others.',
+                    versionName: result.data?.name || 'New Version'
+                });
                 
                 setShowCloneModal(false);
                 setInviteToken(null);
@@ -2287,7 +2322,13 @@ function App() {
             const result = await response.json();
             
             if (result.success) {
-                alert(`Template cloned successfully! ${result.message || 'The shared content has been added to your existing templates and resources.'}`);
+                // Show success notification
+                setSuccessNotification({
+                    show: true,
+                    title: 'Template Cloned Successfully!',
+                    message: 'A new version has been created and added to your list. You can find it in your version dropdown, edit it to make it your own, and share it with others.',
+                    versionName: result.data?.name || 'New Version'
+                });
                 
                 setShowCloneConfirmation(false);
                 setCloneConfirmationData(null);
@@ -2383,7 +2424,13 @@ function App() {
             console.log('Overwrite clone API result:', result);
 
             if (result.success) {
-                alert(`Template overwritten successfully! ${result.message || 'The shared content has replaced your existing version.'}`);                
+                // Show success notification
+                setSuccessNotification({
+                    show: true,
+                    title: 'Template Overwritten Successfully!',
+                    message: 'Your existing version has been replaced with the latest shared content. You can find the updated version in your version dropdown, edit it to make it your own, and share it with others.',
+                    versionName: result.data?.name || 'Updated Version'
+                });
                 
                 setShowDuplicateCloneConfirmation(false);
                 setDuplicateCloneData(null);
@@ -3703,9 +3750,13 @@ function App() {
                                             <div className="flex items-center gap-2 ml-4">
                                                 <button
                                                     onClick={() => handleCopyInviteLink(share.inviteUrl)}
-                                                    className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 transition-colors"
+                                                    className={`px-3 py-1 text-sm rounded-md transition-colors ${
+                                                        copiedLinkId === share.inviteUrl 
+                                                            ? 'bg-green-100 text-green-700' 
+                                                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                                    }`}
                                                 >
-                                                    Copy Link
+                                                    {copiedLinkId === share.inviteUrl ? 'Copied!' : 'Copy Link'}
                                                 </button>
                                                 {share.is_active && (
                                                     <button
@@ -3802,7 +3853,7 @@ function App() {
                         ) : (
                             <div className="space-y-4">
                                 <div className="text-center">
-                                    <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-blue-100 mb-4">
+                                    <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-gray-100 mb-4">
                                         <ShareIcon />
                                     </div>
                                     <h4 className="text-lg font-semibold text-gray-900 mb-2">{sharedTemplateData.title}</h4>
@@ -3821,8 +3872,8 @@ function App() {
                                 </div>
                                 
                                 {!isAuthenticated ? (
-                                    <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4">
-                                        <p className="text-yellow-800 text-sm mb-3">
+                                    <div className="bg-gray-50 border border-gray-200 rounded-md p-4">
+                                        <p className="text-gray-800 text-sm mb-3">
                                             You need to sign in to clone this template to your account.
                                         </p>
                                         <div className="flex gap-2">
@@ -3838,7 +3889,7 @@ function App() {
                                                     setShowAuthModal(true);
                                                     console.log('Auth modal state should be true now');
                                                 }}
-                                                className="flex-1 px-4 py-2 bg-primary-500 text-white rounded-md hover:bg-primary-600 transition-colors cursor-pointer"
+                                                className="flex-1 px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 transition-colors cursor-pointer"
                                                 style={{ pointerEvents: 'auto' }}
                                             >
                                                 Sign In
@@ -3880,144 +3931,133 @@ function App() {
                 </div>
             )}
 
-            {/* Clone Confirmation Modal for Existing Users */}
-            {showCloneConfirmation && cloneConfirmationData && (
+            {/* Unified Clone Confirmation Modal */}
+            {(showCloneConfirmation || showDuplicateCloneConfirmation || showUnifiedCloneConfirmation) && (cloneConfirmationData || duplicateCloneData || unifiedCloneData) && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={(e) => {
                     if (e.target === e.currentTarget) {
                         handleCancelClone();
                     }
                 }}>
                     <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-between mb-4">
-                            <h3 className="text-lg font-semibold text-gray-900">Confirm Clone Operation</h3>
-                            <button
-                                onClick={handleCancelClone}
-                                className="text-gray-400 hover:text-gray-600"
-                            >
-                                <XMarkIcon />
-                            </button>
-                        </div>
-                        
-                        <div className="space-y-4">
-                            <div className="text-center">
-                                <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-yellow-100 mb-4">
-                                    <svg className="h-6 w-6 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
-                                    </svg>
-                                </div>
-                                <h4 className="text-lg font-semibold text-gray-900 mb-2">You Already Have Data</h4>
-                                <p className="text-gray-600 mb-4">{cloneConfirmationData.message}</p>
-                            </div>
+                        {(() => {
+                            // Determine which scenario we're in
+                            const isDuplicate = showDuplicateCloneConfirmation || duplicateCloneData;
+                            const hasExistingData = showCloneConfirmation || cloneConfirmationData;
+                            const data = duplicateCloneData || cloneConfirmationData || unifiedCloneData;
                             
-                            <div className="bg-gray-50 p-4 rounded-md">
-                                <h5 className="font-medium text-gray-900 mb-2">Your existing data:</h5>
-                                <ul className="text-sm text-gray-600 space-y-1">
-                                    {cloneConfirmationData.existingData?.templates && (
-                                        <li>• You have existing onboarding templates</li>
-                                    )}
-                                    {cloneConfirmationData.existingData?.jtbd && (
-                                        <li>• You have existing resource categories and resources</li>
-                                    )}
-                                </ul>
-                            </div>
-                            
-                            <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
-                                <p className="text-blue-800 text-sm mb-3">
-                                    <strong>Smart merging will occur:</strong>
-                                </p>
-                                <ul className="text-blue-700 text-sm space-y-1">
-                                    <li>• <strong>Duplicate templates</strong> will be automatically skipped</li>
-                                    <li>• <strong>Matching categories</strong> will be merged - new resources added to your existing categories</li>
-                                    <li>• <strong>New categories</strong> will be created only when no match exists</li>
-                                    <li>• Your existing data will <strong>never</strong> be replaced or deleted</li>
-                                </ul>
-                            </div>
-                            
-                            <div className="flex gap-3 pt-4">
-                                <button
-                                    onClick={handleCancelClone}
-                                    className="flex-1 px-4 py-2 text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    onClick={handleConfirmedClone}
-                                    disabled={isCloningTemplate}
-                                    className="flex-1 px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
-                                >
-                                    {!isCloningTemplate && <PlusIcon />}
-                                    {isCloningTemplate ? 'Adding...' : 'Add to My Data'}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Duplicate Clone Confirmation Modal */}
-            {showDuplicateCloneConfirmation && duplicateCloneData && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={(e) => {
-                    if (e.target === e.currentTarget) {
-                        handleIgnoreDuplicateClone();
-                    }
-                }}>
-                    <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-between mb-4">
-                            <h3 className="text-lg font-semibold text-gray-900">Duplicate Template Detected</h3>
-                            <button
-                                onClick={handleIgnoreDuplicateClone}
-                                className="text-gray-400 hover:text-gray-600"
-                            >
-                                <XMarkIcon />
-                            </button>
-                        </div>
-                        
-                        <div className="space-y-4">
-                            <div className="text-center">
-                                <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-orange-100 mb-4">
-                                    <svg className="h-6 w-6 text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
-                                    </svg>
-                                </div>
-                                <h4 className="text-lg font-semibold text-gray-900 mb-2">Already Cloned</h4>
-                                <p className="text-gray-600 mb-4">{duplicateCloneData.message}</p>
-                            </div>
-                            
-                            <div className="bg-gray-50 p-4 rounded-md">
-                                <h5 className="font-medium text-gray-900 mb-2">Your existing version:</h5>
-                                <div className="text-sm text-gray-600 space-y-1">
-                                    <div><strong>Name:</strong> {duplicateCloneData.existingVersion?.name}</div>
-                                    <div><strong>Description:</strong> {duplicateCloneData.existingVersion?.description || 'No description'}</div>
-                                    <div><strong>Created:</strong> {duplicateCloneData.existingVersion?.created_at ? new Date(duplicateCloneData.existingVersion.created_at).toLocaleDateString() : 'Unknown'}</div>
-                                </div>
-                            </div>
-                            
-                            <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4">
-                                <p className="text-yellow-800 text-sm mb-3">
-                                    <strong>Choose what to do:</strong>
-                                </p>
-                                <ul className="text-yellow-700 text-sm space-y-1">
-                                    <li>• <strong>Overwrite:</strong> Replace your existing version with the latest shared content</li>
-                                    <li>• <strong>Ignore:</strong> Keep your existing version unchanged</li>
-                                </ul>
-                            </div>
-                            
-                            <div className="flex gap-3 pt-4">
-                                <button
-                                    onClick={handleIgnoreDuplicateClone}
-                                    className="flex-1 px-4 py-2 text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-                                >
-                                    Ignore
-                                </button>
-                                <button
-                                    onClick={handleOverwriteClone}
-                                    disabled={isCloningTemplate}
-                                    className="flex-1 px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
-                                >
-                                    {isCloningTemplate ? 'Overwriting...' : 'Overwrite'}
-                                </button>
-                            </div>
-                        </div>
+                            return (
+                                <>
+                                    <div className="flex items-center justify-between mb-4">
+                                        <h3 className="text-lg font-semibold text-gray-900">
+                                            {isDuplicate ? 'Template Already Exists' : 'Clone Shared Template'}
+                                        </h3>
+                                        <button
+                                            onClick={isDuplicate ? handleIgnoreDuplicateClone : handleCancelClone}
+                                            className="text-gray-400 hover:text-gray-600"
+                                        >
+                                            <XMarkIcon />
+                                        </button>
+                                    </div>
+                                    
+                                    <div className="space-y-4">
+                                        <div className="text-center">
+                                            <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full mb-4 bg-gray-100">
+                                                {isDuplicate ? (
+                                                    <svg className="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                                                    </svg>
+                                                ) : (
+                                                    <svg className="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                                    </svg>
+                                                )}
+                                            </div>
+                                            <h4 className="text-lg font-semibold text-gray-900 mb-2">
+                                                {isDuplicate ? 'You already have this template' : 'Add shared content to your data'}
+                                            </h4>
+                                            <p className="text-gray-600 mb-4">
+                                                {isDuplicate 
+                                                    ? data.message || 'You already have a version from this shared template.'
+                                                    : 'A new version will be created with the shared content.'
+                                                }
+                                            </p>
+                                        </div>
+                                        
+                                        {/* Show existing version details for duplicates */}
+                                        {isDuplicate && data.existingVersion && (
+                                            <div className="bg-gray-50 p-4 rounded-md">
+                                                <h5 className="font-medium text-gray-900 mb-2">Your existing version:</h5>
+                                                <div className="text-sm text-gray-600 space-y-1">
+                                                    <div><strong>Name:</strong> {data.existingVersion.name}</div>
+                                                    <div><strong>Description:</strong> {data.existingVersion.description || 'No description'}</div>
+                                                    <div><strong>Created:</strong> {data.existingVersion.created_at ? new Date(data.existingVersion.created_at).toLocaleDateString() : 'Unknown'}</div>
+                                                </div>
+                                            </div>
+                                        )}
+                                        
+                                        {/* Show existing data info for regular clones */}
+                                        {!isDuplicate && hasExistingData && data.existingData && (
+                                            <div className="bg-gray-50 p-4 rounded-md">
+                                                <h5 className="font-medium text-gray-900 mb-2">Your existing data:</h5>
+                                                <ul className="text-sm text-gray-600 space-y-1">
+                                                    {data.existingData.templates && (
+                                                        <li>• You have existing onboarding templates</li>
+                                                    )}
+                                                    {data.existingData.jtbd && (
+                                                        <li>• You have existing resource categories and resources</li>
+                                                    )}
+                                                </ul>
+                                            </div>
+                                        )}
+                                        
+                                        {/* Information box with different content based on scenario */}
+                                        <div className="border rounded-md p-4 bg-gray-50 border-gray-200">
+                                            <p className="text-sm mb-3 text-gray-800">
+                                                <strong>
+                                                    {isDuplicate ? 'Choose what to do:' : 'What will happen:'}
+                                                </strong>
+                                            </p>
+                                            <ul className="text-sm space-y-1 text-gray-700">
+                                                {isDuplicate ? (
+                                                    <>
+                                                        <li>• <strong>Overwrite:</strong> Replace your existing version with the latest shared content</li>
+                                                        <li>• <strong>Keep Current:</strong> Keep your existing version unchanged</li>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <li>• The shared content will be saved as a new version in your list</li>
+                                                        <li>• You can find it in your version dropdown and switch to it anytime</li>
+                                                        <li>• You can edit it to make it your own and share it with others</li>
+                                                        <li>• Your existing data remains completely unchanged</li>
+                                                    </>
+                                                )}
+                                            </ul>
+                                        </div>
+                                        
+                                        {/* Action buttons */}
+                                        <div className="flex gap-3 pt-4">
+                                            <button
+                                                onClick={isDuplicate ? handleIgnoreDuplicateClone : handleCancelClone}
+                                                className="flex-1 px-4 py-2 text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+                                            >
+                                                {isDuplicate ? 'Keep Current' : 'Cancel'}
+                                            </button>
+                                            <button
+                                                onClick={isDuplicate ? handleOverwriteClone : handleConfirmedClone}
+                                                disabled={isCloningTemplate}
+                                                className="flex-1 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+                                            >
+                                                {!isCloningTemplate && <PlusIcon />}
+                                                {isCloningTemplate 
+                                                    ? (isDuplicate ? 'Overwriting...' : 'Adding...') 
+                                                    : (isDuplicate ? 'Overwrite' : 'Add to My Data')
+                                                }
+                                            </button>
+                                        </div>
+                                    </div>
+                                </>
+                            );
+                        })()}
                     </div>
                 </div>
             )}
@@ -4044,6 +4084,58 @@ function App() {
                     onConfirm={handleDeleteConfirm}
                     isDeleting={isDeletingVersion}
                 />
+            )}
+            
+            {/* Success Notification */}
+            {successNotification.show && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+                        <div className="flex items-center mb-4">
+                            <div className="flex-shrink-0">
+                                <svg className="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
+                            </div>
+                            <div className="ml-3">
+                                <h3 className="text-lg font-medium text-gray-900">
+                                    {successNotification.title}
+                                </h3>
+                            </div>
+                        </div>
+                        <div className="mb-4">
+                            <p className="text-sm text-gray-600">
+                                {successNotification.message}
+                            </p>
+                            {successNotification.versionName && (
+                                <p className="text-sm text-gray-500 mt-2">
+                                    <span className="font-medium">Version:</span> {successNotification.versionName}
+                                </p>
+                            )}
+                        </div>
+                        <div className="bg-gray-50 border border-gray-200 rounded-md p-3 mb-4">
+                            <div className="flex">
+                                <div className="flex-shrink-0">
+                                    <svg className="h-5 w-5 text-gray-600" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                                    </svg>
+                                </div>
+                                <div className="ml-3">
+                                    <p className="text-sm text-gray-800">
+                                        <strong>Pro tip:</strong> You can now edit this cloned version to customize it for your specific needs, then share your personalized version with others.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="flex justify-end">
+                            <button
+                                onClick={() => setSuccessNotification({ show: false, title: '', message: '', versionName: '' })}
+                                className="bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-md text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+                            >
+                                Got it!
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );

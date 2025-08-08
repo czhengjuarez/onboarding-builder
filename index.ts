@@ -49,6 +49,63 @@ app.get('/api/test/env', async (c) => {
   })
 })
 
+// Debug endpoint to test database operations
+app.get('/api/test/db', async (c) => {
+  try {
+    // Test basic database connection
+    const tables = await c.env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all()
+    
+    // Test user creation
+    const testUserId = 'test-' + Date.now()
+    await c.env.DB.prepare(
+      'INSERT INTO users (id, email, name, picture) VALUES (?, ?, ?, ?)'
+    ).bind(testUserId, 'test@example.com', 'Test User', null).run()
+    
+    // Test version creation
+    const testVersionId = 'version-' + Date.now()
+    await c.env.DB.prepare(
+      'INSERT INTO template_versions (id, user_id, name, description, is_default) VALUES (?, ?, ?, ?, ?)'
+    ).bind(testVersionId, testUserId, 'Test Version', 'Test Description', 1).run()
+    
+    // Test template creation
+    const testTemplateId = 'template-' + Date.now()
+    await c.env.DB.prepare(
+      'INSERT INTO onboarding_templates (id, user_id, period, title, priority, completed, version_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).bind(testTemplateId, testUserId, 'firstDay', 'Test Template', 'high', false, testVersionId).run()
+    
+    // Test JTBD category creation
+    const testCategoryId = 'category-' + Date.now()
+    await c.env.DB.prepare(
+      'INSERT INTO jtbd_categories (id, user_id, name, category, job, situation, outcome, version_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).bind(testCategoryId, testUserId, 'Test Category', 'Test Category', 'test job', 'test situation', 'test outcome', testVersionId).run()
+    
+    // Test resource creation
+    const testResourceId = 'resource-' + Date.now()
+    await c.env.DB.prepare(
+      'INSERT INTO resources (id, category_id, name, title, type, url) VALUES (?, ?, ?, ?, ?, ?)'
+    ).bind(testResourceId, testCategoryId, 'Test Resource', 'Test Resource Title', 'tool', 'https://example.com').run()
+    
+    // Clean up test data
+    await c.env.DB.prepare('DELETE FROM resources WHERE id = ?').bind(testResourceId).run()
+    await c.env.DB.prepare('DELETE FROM jtbd_categories WHERE id = ?').bind(testCategoryId).run()
+    await c.env.DB.prepare('DELETE FROM onboarding_templates WHERE id = ?').bind(testTemplateId).run()
+    await c.env.DB.prepare('DELETE FROM template_versions WHERE id = ?').bind(testVersionId).run()
+    await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(testUserId).run()
+    
+    return c.json({
+      success: true,
+      message: 'All database operations completed successfully',
+      tables: tables.results.map(t => t.name)
+    })
+  } catch (error) {
+    return c.json({
+      success: false,
+      error: error.message,
+      stack: error.stack
+    }, 500)
+  }
+})
+
 // API Routes for onboarding templates
 app.get('/api/templates/:userId', async (c) => {
   const userId = c.req.param('userId')
@@ -854,12 +911,58 @@ app.get('/api/versions/:userId', async (c) => {
   }
   
   try {
+    // Check if user needs initialization (first time loading versions)
+    const user = await c.env.DB.prepare(
+      'SELECT has_been_initialized FROM users WHERE id = ?'
+    ).bind(userId).first()
+    
+    console.log('🔍 Loading versions for user:', userId)
+    console.log('🔍 User initialization status:', user?.has_been_initialized)
+    
     const { results } = await c.env.DB.prepare(
       'SELECT * FROM template_versions WHERE user_id = ? ORDER BY is_default DESC, created_at DESC'
     ).bind(userId).all()
     
-    console.log('🔍 Loading versions for user:', userId)
     console.log('🔍 Found versions:', results?.length || 0)
+    
+    // If user is uninitialized and has no versions, create default version with seed content
+    if (user && !user.has_been_initialized && (!results || results.length === 0)) {
+      console.log('🌱 User needs initialization - creating default version with seed content')
+      
+      try {
+        // Create default version
+        const defaultVersionId = crypto.randomUUID()
+        await c.env.DB.prepare(
+          'INSERT INTO template_versions (id, user_id, name, description, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
+        ).bind(defaultVersionId, userId, 'Base version', 'My starter version', true).run()
+        
+        console.log('✅ Created default version:', defaultVersionId)
+        
+        // Seed default content
+        console.log('🌱 Seeding default templates and resources...')
+        await seedDefaultTemplates(userId, c.env.DB, defaultVersionId)
+        await seedDefaultResources(userId, c.env.DB, defaultVersionId)
+        console.log('✅ Seeding completed')
+        
+        // Mark user as initialized
+        await c.env.DB.prepare(
+          'UPDATE users SET has_been_initialized = 1 WHERE id = ?'
+        ).bind(userId).run()
+        
+        console.log('✅ User marked as initialized')
+        
+        // Reload versions to include the new default version
+        const { results: newResults } = await c.env.DB.prepare(
+          'SELECT * FROM template_versions WHERE user_id = ? ORDER BY is_default DESC, created_at DESC'
+        ).bind(userId).all()
+        
+        return c.json({ success: true, data: newResults })
+      } catch (seedError) {
+        console.error('❌ Error during user initialization:', seedError)
+        // Continue with empty results if seeding fails
+      }
+    }
+    
     if (results && results.length > 0) {
       console.log('🔍 Version details:', JSON.stringify(results, null, 2))
     }
@@ -1275,7 +1378,7 @@ app.get('/api/auth/google/callback', async (c) => {
       console.log('🔄 [OAuth] Updating existing user:', user.id)
       try {
         await c.env.DB.prepare(
-          'UPDATE users SET name = ?, profile_image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+          'UPDATE users SET name = ?, picture = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
         ).bind(userInfo.name, userInfo.picture, user.id).run()
         console.log('✅ [OAuth] User updated successfully')
       } catch (dbError) {
@@ -1286,7 +1389,7 @@ app.get('/api/auth/google/callback', async (c) => {
       console.log('🆕 [OAuth] Creating new user:', userInfo.id)
       try {
         await c.env.DB.prepare(
-          'INSERT INTO users (id, email, name, profile_image_url) VALUES (?, ?, ?, ?)'
+          'INSERT INTO users (id, email, name, picture) VALUES (?, ?, ?, ?)'
         ).bind(userInfo.id, userInfo.email, userInfo.name, userInfo.picture).run()
         console.log('✅ [OAuth] New user created successfully')
         user = { id: userInfo.id, email: userInfo.email, name: userInfo.name, profile_image_url: userInfo.picture }
@@ -1309,11 +1412,9 @@ app.get('/api/auth/google/callback', async (c) => {
         
         console.log('✅ [OAuth] Default version created successfully')
         
-        // Now seed default templates and JTBD resources into the default version
-        console.log('🌱 [OAuth] Seeding default content into default version...')
-        await seedDefaultTemplates(userInfo.id, c.env.DB, defaultVersionId)
-        await seedDefaultResources(userInfo.id, c.env.DB, defaultVersionId)
-        console.log('✅ [OAuth] Default content seeded into default version')
+        // Temporarily disable seeding to test basic OAuth flow
+        console.log('🌱 [OAuth] Skipping default content seeding for testing...')
+        console.log('✅ [OAuth] Basic user and version creation completed successfully')
       } catch (dbError) {
         console.error('❌ [OAuth] Failed to create new user or seed content:', dbError)
         return c.redirect('/?error=db_create_failed')
@@ -1676,8 +1777,8 @@ const seedDefaultResources = async (userId: string, db: D1Database, versionId?: 
       console.log('🔍 Inserting JTBD category:', category.category, 'with ID:', category.id)
       
       await db.prepare(
-        'INSERT INTO jtbd_categories (id, user_id, category, job, situation, outcome, version_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
-      ).bind(category.id, userId, category.category, category.job, category.situation, category.outcome, versionId || null).run()
+        'INSERT INTO jtbd_categories (id, name, version_id, created_at, updated_at, user_id, category, job, situation, outcome) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?)'
+      ).bind(category.id, category.category, versionId || null, userId, category.category, category.job, category.situation, category.outcome).run()
       
       console.log('✅ Successfully inserted JTBD category:', category.category)
       
@@ -1691,8 +1792,8 @@ const seedDefaultResources = async (userId: string, db: D1Database, versionId?: 
         console.log('🔍 Inserting resource:', resource.name, 'with ID:', resourceId, 'for category ID:', category.id)
         
         await db.prepare(
-          'INSERT INTO resources (id, category_id, name, type, url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
-        ).bind(resourceId, category.id, resource.name, resource.type, resource.url).run()
+          'INSERT INTO resources (id, title, url, type, category_id, created_at, updated_at, name) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)'
+        ).bind(resourceId, resource.name, resource.url, resource.type, category.id, resource.name).run()
         
         console.log('✅ Successfully inserted resource:', resource.name)
       }
