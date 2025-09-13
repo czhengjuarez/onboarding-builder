@@ -1,36 +1,39 @@
 # Onboarding Builder
 
-A comprehensive onboarding template builder and management system built with React and deployed on Cloudflare Workers. Create, manage, and share onboarding templates with version control, JTBD (Jobs-to-be-Done) framework integration, and collaborative features.
+A comprehensive onboarding template builder and management system built with React and deployed on Cloudflare Workers. Create, manage, and share onboarding templates with version control, resource management, and collaborative features.
 
 ## 🚀 Features
 
 ### Core Functionality
-- **Template Management**: Create, edit, and organize onboarding templates
-- **Version Control**: Multiple versions per template with seamless switching
-- **JTBD Integration**: Jobs-to-be-Done framework with categories and resources
-- **Template Sharing**: Share templates with others via secure links
-- **Clone System**: Clone shared templates with duplicate detection and overwrite options
-- **Auto-save**: Automatic saving of changes with visual feedback
+- **Template Management**: Create, edit, and organize onboarding templates across multiple time periods
+- **Version Control**: Multiple named versions per user with seamless switching and management
+- **Resource Management**: Organize resources by categories with inline editing and auto-save
+- **Template Sharing**: Share templates with others via secure links with clone limits
+- **Clone System**: Clone shared templates with intelligent duplicate detection and merge options
+- **PDF Export**: Export templates and resources to PDF with hyperlink preservation
+- **Guest Mode**: Try the app without registration with smart warning system
 
 ### Authentication
-- **Google OAuth**: Seamless Google account integration
-- **Email Authentication**: Traditional email/password login
-- **Profile Management**: User profiles with image support and fallback system
+- **Google OAuth**: Seamless Google account integration with popup and redirect support
+- **Email Authentication**: Traditional email/password registration and login
+- **Account Management**: Profile management with secure account deletion
+- **JWT Security**: Secure token-based authentication system
 
 ### User Experience
-- **Responsive Design**: Works on desktop and mobile devices
-- **Real-time Updates**: Immediate UI synchronization after edits
-- **Professional UI**: Elegant gray color scheme with brand-consistent accents
-- **Success Notifications**: In-app notifications replacing browser alerts
-- **Unified Dialogs**: Streamlined confirmation dialogs for all scenarios
+- **Responsive Design**: Works seamlessly on desktop and mobile devices
+- **Real-time Updates**: Immediate UI synchronization after all operations
+- **Professional UI**: Clean design with brand colors (#8F1F57) and Tailwind CSS
+- **Success Notifications**: Elegant in-app notifications and feedback
+- **Auto-save**: Automatic saving with visual indicators for all content
 
 ## 🛠️ Tech Stack
 
 - **Frontend**: React 18, TypeScript, Tailwind CSS, Vite
-- **Backend**: Cloudflare Workers, D1 Database
-- **Authentication**: Google OAuth 2.0, JWT tokens
-- **Deployment**: Cloudflare Workers with edge computing
-- **Development**: Local development with Wrangler CLI
+- **Backend**: Cloudflare Workers with Hono framework, D1 Database
+- **Authentication**: Google OAuth 2.0, JWT tokens, bcrypt password hashing
+- **PDF Generation**: jsPDF with html2canvas for image-based exports
+- **Deployment**: Cloudflare Workers with edge computing and static asset serving
+- **Development**: Local development with Wrangler CLI and hot reload
 
 ## 📋 Prerequisites
 
@@ -62,32 +65,35 @@ JWT_SECRET=your_jwt_secret_key
 ### 4. Database Setup
 ```bash
 # Create local D1 database
-npx wrangler d1 create onboarding-builder-dev
+npx wrangler d1 create onboarding-builder-versions-dev
 
 # Run migrations
-npx wrangler d1 migrations apply onboarding-builder-dev --local
+npx wrangler d1 migrations apply onboarding-builder-versions-dev --local
 ```
 
 ### 5. Development
 ```bash
-# Start frontend (localhost:3000)
+# Start frontend development server
 npm run dev
 
-# Start backend in new terminal (localhost:8787)
-npm run dev:worker
+# Start backend worker in new terminal
+npm run dev:wrangler
 ```
 
 ## 📦 Available Scripts
 
 ### Development
-- `npm run dev` - Start frontend development server
-- `npm run dev:worker` - Start backend worker locally
+- `npm run dev` - Start frontend development server (Vite)
+- `npm run dev:wrangler` - Start backend worker locally (port 8787)
 - `npm run build` - Build frontend for production
+- `npm run preview` - Preview production build locally
 - `npm run deploy` - Build and deploy to Cloudflare Workers
 
 ### Database
+- `npm run db:migrate` - Apply migrations to local database
 - `npx wrangler d1 migrations apply [DB_NAME] --local` - Apply migrations locally
 - `npx wrangler d1 migrations apply [DB_NAME] --remote` - Apply migrations to production
+- `npx wrangler secret put [SECRET_NAME]` - Set production environment variables
 
 ## 🏗️ Project Structure
 
@@ -118,7 +124,12 @@ npm run dev:worker
 1. Update `wrangler.toml` with your worker name
 2. Create D1 database: `npx wrangler d1 create your-db-name`
 3. Update database binding in `wrangler.toml`
-4. Set environment variables in Cloudflare dashboard
+4. Set production secrets using Wrangler CLI:
+   ```bash
+   npx wrangler secret put GOOGLE_CLIENT_ID
+   npx wrangler secret put GOOGLE_CLIENT_SECRET
+   npx wrangler secret put JWT_SECRET
+   ```
 
 ## 🚀 Deployment
 
@@ -132,10 +143,12 @@ npx wrangler d1 migrations apply your-db-name --remote
 ```
 
 ### Environment Variables (Production)
-Set in Cloudflare Workers dashboard:
-- `GOOGLE_CLIENT_ID`
-- `GOOGLE_CLIENT_SECRET` 
-- `JWT_SECRET`
+Set using `wrangler secret put` command:
+- `GOOGLE_CLIENT_ID` - Google OAuth client ID
+- `GOOGLE_CLIENT_SECRET` - Google OAuth client secret
+- `JWT_SECRET` - Secret key for JWT token signing
+
+**Note**: Use `wrangler secret put [SECRET_NAME]` to securely set production secrets. Never commit secrets to version control.
 
 ## 🎯 Key Features Explained
 
@@ -208,6 +221,33 @@ This project is licensed under the MIT License.
 
 ## 🔗 Links
 
-- **Production**: https://onboarding-builder2.coscient.workers.dev
+- **Production**: https://onboarding-builder.coscient.workers.dev
 - **Repository**: https://github.com/czhengjuarez/onboarding-builder
 - **Issues**: https://github.com/czhengjuarez/onboarding-builder/issues
+
+## 🏗️ Database Schema
+
+The application uses Cloudflare D1 with the following main tables:
+
+- **users** - User accounts with authentication data
+- **template_versions** - Named versions for organizing templates
+- **onboarding_templates** - Individual onboarding tasks/items
+- **jtbd_categories** - Resource categories (renamed from JTBD)
+- **resources** - Individual resources within categories
+- **shared_templates** - Template sharing with clone limits
+
+Migrations are located in the `/migrations` directory and should be applied in order.
+
+## 🎯 Development Notes
+
+### Recent Major Updates
+- **Template Versioning System**: Complete version management with create, edit, delete, and set-default functionality
+- **Enhanced Clone System**: Intelligent duplicate detection and merge options for shared templates
+- **PDF Export Enhancement**: Dual export system with hyperlink preservation for resources
+- **Authentication Improvements**: Unified JWT system and secure account management
+- **UI Polish**: Professional design with consistent brand colors and improved UX
+
+### Known Issues
+- Template re-seeding occurs when users delete all templates (by design)
+- Google OAuth requires proper redirect URI configuration in Google Console
+- Local development requires both frontend and backend servers running simultaneously
